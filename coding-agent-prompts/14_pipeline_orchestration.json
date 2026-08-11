@@ -1,0 +1,200 @@
+{
+  "stage": 14,
+  "stage_id": "pipeline_orchestration",
+  "title": "End-to-End Pipeline Orchestration (Recorded Footage)",
+  "inherits": "00_GLOBAL_CONTRACT.json",
+  "depends_on": [1, 2, 3, 4, 9, 10, 11, 12, 13],
+  "estimated_complexity": "high",
+
+  "objective": "Wire every component built so far into a single reliable pipeline that takes video files plus a camera topology and produces stored, enriched sightings — with checkpointing, idempotency, error isolation, and observable progress.",
+
+  "context_for_agent": "Every piece exists; this stage makes them a system. The operational qualities matter more than the algorithmic ones here: a run over hours of footage must survive a crash, resume without reprocessing, isolate a failure in one camera from the others, and never write half-complete data. Design for restartability from the beginning rather than adding it after the first long run fails.",
+
+  "tasks": [
+    {
+      "id": "14.1",
+      "name": "Pipeline stage abstraction",
+      "detail": "Define a PipelineStage protocol with process(input) -> output, a declared name, and per-stage metrics. Compose: Ingest -> Detect -> Track -> [PlateRead, Embed] -> Sighting -> Persist. Plate reading and embedding are independent of one another and may run concurrently. Each stage is individually testable, replaceable, and skippable via configuration (e.g. run detection-only for a quick coverage survey)."
+    },
+    {
+      "id": "14.2",
+      "name": "Job model and configuration",
+      "detail": "Define a ProcessingJob: job_id, list of (camera_id, source_uri) pairs, optional time range, pipeline configuration snapshot, and status (pending | running | paused | completed | failed | cancelled). The configuration snapshot is stored with the job so results are reproducible and auditable — knowing which thresholds and model versions produced a given sighting is essential when the output is used as evidence."
+    },
+    {
+      "id": "14.3",
+      "name": "Checkpointing and resumption",
+      "detail": "Persist progress at a configurable frame interval: per source, the last fully-processed frame index and a running counter of emitted sightings. On resume, seek each source to its checkpoint and continue. Checkpoint writes and sighting writes must be transactionally consistent, so a crash can never leave a checkpoint claiming progress past sightings that were never written."
+    },
+    {
+      "id": "14.4",
+      "name": "Idempotency",
+      "detail": "Reprocessing the same source over the same range must not duplicate sightings. Derive a deterministic sighting_id from (camera_id, source_id, track_id, representative_frame_index) via a documented hash so re-runs collide deliberately with ON CONFLICT DO NOTHING. Provide an explicit force-reprocess mode that deletes prior results for the range first, within a transaction."
+    },
+    {
+      "id": "14.5",
+      "name": "Error isolation and retry",
+      "detail": "Define failure scopes: frame-level (log, count, continue), track-level (emit the sighting with whatever enrichment succeeded — a missing plate must not discard the detection), source-level (mark that source failed, continue other sources), and job-level (only truly unrecoverable conditions such as database unavailability). Implement retry with exponential backoff for transient failures, with a configurable retry budget per scope. A degraded result is almost always better than no result."
+    },
+    {
+      "id": "14.6",
+      "name": "Concurrency architecture",
+      "detail": "Process multiple cameras concurrently while sharing scarce resources (GPU, database connections) correctly. Choose and document an architecture — recommend a bounded worker pool per stage connected by bounded queues, with backpressure so a slow persistence layer throttles ingestion rather than accumulating unbounded memory. Ensure GPU access is serialized or batched appropriately rather than contended across workers."
+    },
+    {
+      "id": "14.7",
+      "name": "Progress reporting",
+      "detail": "Emit structured progress: per-source frames processed and total, sightings emitted, current throughput in fps, estimated completion time, and per-stage timing breakdown. Expose via a callback interface consumable by the CLI, the API (stage 15), and the metrics system (stage 18)."
+    },
+    {
+      "id": "14.8",
+      "name": "Dry-run and validation mode",
+      "detail": "Implement a mode that validates the entire configuration before processing: all source URIs reachable and decodable, all camera_ids present in the topology, all model weights loadable, database reachable and migrated, output directories writable, and sufficient disk space for the estimated thumbnail volume. Report every problem at once rather than failing on the first — an operator should not discover misconfiguration three hours into a run."
+    },
+    {
+      "id": "14.9",
+      "name": "CLI",
+      "detail": "Implement scripts/process_footage.py with subcommands: run (start a job), resume (continue from checkpoint), status, cancel, validate (dry run), and reprocess (force). Include clear progress output and a non-zero exit code on failure so it composes with shell automation."
+    },
+    {
+      "id": "14.10",
+      "name": "Search workflow integration",
+      "detail": "Implement the end-user workflow: search_target(plate_or_target, time_window, camera_ids) which runs matching (stages 6-7), path reconstruction (stage 8), and temporal integrity checks (stage 9), returning a complete Trajectory with confidence, gaps, alternatives, integrity caveats, and explanations. This is the function the API and UI call — the single entry point that answers 'where did it go?'."
+    }
+  ],
+
+  "tests_substage": {
+    "id": "14.T",
+    "description": "Failure-mode testing is the substance of this stage. Use the synthetic video source and fake models throughout so the whole pipeline runs in CI in seconds.",
+    "unit_tests": [
+      {
+        "target": "stage composition",
+        "cases": [
+          "each stage's output type matches the next stage's input type",
+          "a disabled stage is skipped and its input passes through unchanged",
+          "stage metrics are recorded for every stage on every invocation",
+          "an exception in one stage is caught at the configured scope and does not propagate beyond it"
+        ]
+      },
+      {
+        "target": "idempotency",
+        "cases": [
+          "the derived sighting_id is deterministic for identical inputs",
+          "the derived sighting_id differs for different tracks, cameras, or sources",
+          "processing the same source twice produces no duplicate sightings",
+          "force-reprocess deletes prior results then reprocesses, ending with the same count as a single fresh run",
+          "force-reprocess failing midway leaves prior results intact (transactional)"
+        ]
+      },
+      {
+        "target": "checkpointing",
+        "cases": [
+          "a checkpoint is written at the configured interval",
+          "resume seeks to the checkpointed frame and does not reprocess earlier frames",
+          "resume from a checkpoint at frame 0 processes the whole source",
+          "resume from a checkpoint at the final frame completes immediately",
+          "a crash simulated between the sighting write and the checkpoint write results in at-most-once duplication that idempotency then absorbs — verified end to end",
+          "a corrupt checkpoint record is detected and reported rather than silently restarting"
+        ]
+      },
+      {
+        "target": "error isolation",
+        "cases": [
+          "a frame-level decode error is counted and processing continues",
+          "a plate-read failure still emits the sighting with the embedding populated",
+          "an embedding failure still emits the sighting with the plate populated",
+          "both enrichments failing still emits a bare detection sighting",
+          "one source failing entirely does not stop the other sources and is reported as failed",
+          "database unavailability fails the job rather than silently dropping sightings",
+          "retry backoff intervals follow the configured schedule",
+          "the retry budget is respected and exhaustion escalates to the next scope"
+        ]
+      },
+      {
+        "target": "concurrency",
+        "cases": [
+          "results with concurrency enabled are identical to sequential results on the same input (determinism under parallelism)",
+          "bounded queues apply backpressure — a slow consumer does not cause unbounded memory growth",
+          "worker pool shutdown drains queues without losing items",
+          "no data race on shared state, verified by concurrent execution with assertions on aggregate counters"
+        ]
+      },
+      {
+        "target": "dry-run validation",
+        "cases": [
+          "a fully valid configuration passes with no reported problems",
+          "an unreachable source is reported",
+          "a camera_id missing from the topology is reported",
+          "missing model weights are reported",
+          "an unwritable output directory is reported",
+          "ALL problems are reported together, not just the first — asserted with a configuration containing several simultaneous faults"
+        ]
+      }
+    ],
+    "integration_tests": [
+      {
+        "target": "full pipeline on synthetic sources",
+        "cases": [
+          "three synthetic sources with scripted detections produce exactly the expected sightings in the database",
+          "sightings carry correct camera_id, corrected timestamps, plate fields, and embeddings",
+          "the run is deterministic across repeated executions",
+          "the configuration snapshot is stored with the job and matches the active configuration"
+        ]
+      },
+      {
+        "target": "full pipeline on real sample media",
+        "cases": [
+          "committed sample clips from multiple cameras process end to end with real models (marked 'requires_models')",
+          "the resulting sightings are queryable and matchable via search_target",
+          "thumbnails exist on disk for every sighting"
+        ]
+      },
+      {
+        "target": "search workflow",
+        "cases": [
+          "searching a known plate present in the processed footage returns a trajectory covering the expected cameras in the expected order",
+          "searching an absent plate returns an empty result cleanly, not an error",
+          "the returned trajectory includes confidence, gaps, alternatives, integrity caveats, and explanations",
+          "a search restricted by time window and camera set respects both filters",
+          "a search over data with a known clock-drift issue surfaces the integrity caveat"
+        ]
+      },
+      {
+        "target": "resumption under simulated failure",
+        "cases": [
+          "killing the job mid-run and resuming produces the same final sighting set as an uninterrupted run — the definitive resumption test",
+          "resuming a completed job is a no-op",
+          "resuming a cancelled job continues from its checkpoint"
+        ]
+      },
+      {
+        "target": "scale and performance",
+        "cases": [
+          "processing a long synthetic source maintains bounded memory throughout (marked 'slow')",
+          "throughput across four concurrent sources exceeds sequential processing",
+          "database write throughput keeps pace with detection under batching",
+          "progress estimates converge toward the actual completion time"
+        ]
+      }
+    ]
+  },
+
+  "exit_criteria": [
+    "The kill-and-resume test produces results identical to an uninterrupted run",
+    "Reprocessing never duplicates sightings",
+    "A failure in any single component degrades the output rather than discarding it",
+    "Dry-run reports every configuration problem in one pass",
+    "search_target returns a complete, explained trajectory and is the single entry point for the UI and API"
+  ],
+
+  "deliverables": [
+    "src/multicam_tracker/pipeline/{__init__,stages,job,checkpoint,idempotency,errors,concurrency,progress,validation,runner,search}.py",
+    "scripts/process_footage.py",
+    "tests/unit/pipeline/ (one module per source module)",
+    "tests/integration/pipeline/test_full_pipeline_synthetic.py",
+    "tests/integration/pipeline/test_full_pipeline_real_media.py",
+    "tests/integration/pipeline/test_resumption.py",
+    "tests/integration/pipeline/test_search_workflow.py",
+    "docs/PIPELINE.md documenting the architecture, failure scopes, and operator procedures"
+  ]
+}

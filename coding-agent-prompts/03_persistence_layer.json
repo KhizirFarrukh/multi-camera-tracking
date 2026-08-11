@@ -1,0 +1,180 @@
+{
+  "stage": 3,
+  "stage_id": "persistence_layer",
+  "title": "Database Schema, Migrations, and Repository Layer",
+  "inherits": "00_GLOBAL_CONTRACT.json",
+  "depends_on": [1, 2],
+  "estimated_complexity": "medium",
+
+  "objective": "Persist every domain entity in PostgreSQL with pgvector, expose access through a repository abstraction, and provide the indexing needed for the two dominant query patterns: plate lookup and time-windowed per-camera scans.",
+
+  "context_for_agent": "The repository interfaces defined here are consumed by nearly every later stage. Design them around the queries the system actually performs (listed in required_query_patterns) rather than as generic CRUD. Keep SQLAlchemy models separate from Pydantic domain models with explicit mapping functions — do not merge them.",
+
+  "required_query_patterns": [
+    "Find all sightings whose normalized plate exactly equals X, optionally within a time window",
+    "Find all sightings whose ambiguity-folded plate equals the folded form of X (fuzzy candidate prefilter)",
+    "Find all sightings for camera C between time T1 and T2, ordered by timestamp",
+    "Find the K nearest sightings by embedding cosine distance, optionally filtered to a camera set and time window",
+    "Find all sightings within a time window across all cameras, ordered by timestamp (trajectory assembly)",
+    "Find all match candidates for a target, filtered by review_status",
+    "Find sightings older than the retention TTL for purging",
+    "Count sightings per camera per hour (for observability dashboards)"
+  ],
+
+  "tasks": [
+    {
+      "id": "3.1",
+      "name": "SQLAlchemy ORM models",
+      "detail": "In src/multicam_tracker/db/orm.py define tables: cameras, camera_links, sightings, targets, match_candidates, trajectories, trajectory_hops, audit_log. Use SQLAlchemy 2.x declarative with Mapped[] annotations. sightings.embedding uses the pgvector Vector(dim) type with dim from settings. Use UUID column types for id fields, TIMESTAMP WITH TIME ZONE for all datetimes, and JSONB for flexible metadata columns."
+    },
+    {
+      "id": "3.2",
+      "name": "Constraints and referential integrity",
+      "detail": "Add: FK sightings.camera_id -> cameras.camera_id (ON DELETE RESTRICT — never orphan a sighting); FK camera_links both ends -> cameras; FK match_candidates.sighting_id -> sightings (ON DELETE CASCADE) and .target_id -> targets (CASCADE); FK trajectory_hops.trajectory_id -> trajectories (CASCADE). CHECK constraints mirroring the model invariants: confidences in [0,1], max_travel_time > min_travel_time, bbox array length 4. Unique constraint on (from_camera_id, to_camera_id) for camera_links. Unique constraint on (target_id, sighting_id) for match_candidates so the same sighting cannot be matched to the same target twice."
+    },
+    {
+      "id": "3.3",
+      "name": "Indexes",
+      "detail": "Create: btree index on sightings(plate_text_normalized) WHERE plate_text_normalized IS NOT NULL (partial, since many sightings have no plate); btree index on sightings(plate_folded) — a stored generated or trigger-maintained column holding the ambiguity-folded plate for fuzzy prefiltering; composite btree on sightings(camera_id, timestamp_utc); btree on sightings(timestamp_utc) for cross-camera windowed scans; HNSW index on sightings.embedding using vector_cosine_ops with documented m and ef_construction values; btree on match_candidates(target_id, review_status); btree on sightings(created_at) for retention purging. Document in a comment why each index exists and which query pattern it serves."
+    },
+    {
+      "id": "3.4",
+      "name": "Alembic migrations",
+      "detail": "Initialize Alembic. Write the initial migration creating the vector extension, all tables, constraints, and indexes. Migration must be reversible (working downgrade). Verify that upgrade -> downgrade -> upgrade leaves an identical schema. Configure Alembic to read the DSN from Settings rather than a hardcoded URL."
+    },
+    {
+      "id": "3.5",
+      "name": "Session management",
+      "detail": "In src/multicam_tracker/db/session.py provide an engine factory (with pool settings from config), a sessionmaker, a context-managed session helper that commits on success and rolls back on exception, and a FastAPI-compatible dependency provider. Support both sync and async sessions; choose one as primary and document the choice."
+    },
+    {
+      "id": "3.6",
+      "name": "Domain <-> ORM mapping",
+      "detail": "In src/multicam_tracker/db/mappers.py implement explicit to_orm(domain_model) and to_domain(orm_row) functions for each entity. Mapping must be total — no silently dropped fields. Include a test-enforced check that the field sets of the domain model and ORM model correspond."
+    },
+    {
+      "id": "3.7",
+      "name": "Repository interfaces",
+      "detail": "In src/multicam_tracker/db/repositories/ define Protocol interfaces then concrete Postgres implementations: CameraRepository (upsert, get, list_enabled, delete), CameraLinkRepository (upsert, get_links_from, get_link, list_all), SightingRepository (add, add_batch, get, find_by_plate_exact, find_by_plate_folded, find_by_camera_and_window, find_by_window, find_nearest_by_embedding, delete_older_than, count_by_camera_hour), TargetRepository (create, get, list_active, deactivate), MatchRepository (upsert_candidate, list_for_target, update_review_status, bulk_upsert), TrajectoryRepository (save, get, list_for_target)."
+    },
+    {
+      "id": "3.8",
+      "name": "Batch insertion performance",
+      "detail": "add_batch must use a bulk insert path (executemany or COPY) rather than per-row inserts, because the video pipeline in stage 13 will produce thousands of sightings per minute. Include an ON CONFLICT DO NOTHING option keyed on sighting_id so re-processing a video is idempotent."
+    },
+    {
+      "id": "3.9",
+      "name": "Retention support",
+      "detail": "Implement delete_older_than(cutoff_utc) returning the count deleted, and a companion function returning the thumbnail paths that were deleted so stage 18's purge job can remove the files from disk. Deletion must cascade correctly to match_candidates without violating trajectory integrity — document and test the chosen behavior when a purged sighting belongs to a saved trajectory."
+    },
+    {
+      "id": "3.10",
+      "name": "In-memory fake repositories",
+      "detail": "Provide fully functional in-memory implementations of every repository Protocol in tests/fixtures/fake_repositories.py. Every later stage's unit tests will use these instead of a database. They must honor the same semantics (ordering, filtering, conflict handling) as the Postgres implementations — this is important enough to be tested by a shared conformance test suite."
+    }
+  ],
+
+  "tests_substage": {
+    "id": "3.T",
+    "description": "The critical test here is the conformance suite: one set of behavioral tests run against BOTH the Postgres and in-memory implementations, guaranteeing that unit tests using fakes actually predict production behavior.",
+    "unit_tests": [
+      {
+        "target": "mappers",
+        "cases": [
+          "each entity round-trips domain -> orm -> domain producing an equal object",
+          "field-set correspondence check fails loudly if a field is added to a domain model but not to the ORM model",
+          "None-valued optional fields map correctly in both directions",
+          "embedding list maps to and from the vector column type without precision loss beyond float32"
+        ]
+      },
+      {
+        "target": "session management",
+        "cases": [
+          "context manager commits on clean exit",
+          "context manager rolls back when the body raises",
+          "the original exception propagates rather than being masked by a rollback error",
+          "session is closed in both success and failure paths"
+        ]
+      }
+    ],
+    "conformance_tests": {
+      "description": "Parametrized over [PostgresRepository, InMemoryRepository]. Postgres variant marked 'integration' and uses testcontainers; in-memory variant runs as a unit test.",
+      "cases": [
+        "add then get returns an equal sighting",
+        "add_batch inserts all rows and returns the correct count",
+        "add_batch with a duplicate sighting_id and conflict-ignore enabled inserts only the new rows and does not raise",
+        "find_by_plate_exact returns only exact normalized matches and excludes near-misses",
+        "find_by_plate_exact with a time window excludes sightings outside the window; boundary instants tested for inclusivity per the documented convention",
+        "find_by_plate_folded returns records that differ only by ambiguous character substitutions",
+        "find_by_camera_and_window returns results ordered strictly by ascending timestamp",
+        "find_by_camera_and_window on a camera with no sightings returns an empty list, not None",
+        "find_by_window spanning all cameras returns globally time-ordered results",
+        "find_nearest_by_embedding returns results ordered by descending cosine similarity",
+        "find_nearest_by_embedding respects the K limit exactly",
+        "find_nearest_by_embedding with a camera filter excludes other cameras",
+        "find_nearest_by_embedding ignores sightings with NULL embeddings",
+        "upsert_candidate updates rather than duplicates on repeat call with the same (target_id, sighting_id)",
+        "list_for_target filtered by review_status returns only matching statuses",
+        "update_review_status changes only the targeted record",
+        "delete_older_than removes exactly the rows before the cutoff and returns the correct count and thumbnail paths",
+        "delete_older_than with a cutoff before all data deletes nothing and returns 0",
+        "count_by_camera_hour buckets correctly across an hour boundary and across a UTC day boundary",
+        "camera FK violation (sighting referencing an unknown camera) raises StorageError, not a raw driver exception"
+      ]
+    },
+    "integration_tests": [
+      {
+        "target": "migrations",
+        "cases": [
+          "alembic upgrade head on an empty database succeeds",
+          "alembic downgrade base then upgrade head reproduces an identical schema (compare via schema introspection)",
+          "the vector extension is present after migration",
+          "all declared indexes exist after migration, verified by querying pg_indexes",
+          "all declared CHECK and FK constraints exist, verified via information_schema"
+        ]
+      },
+      {
+        "target": "constraint enforcement at the database level",
+        "cases": [
+          "inserting a confidence outside [0,1] directly via SQL is rejected by the CHECK constraint",
+          "inserting a duplicate camera_link pair is rejected by the unique constraint",
+          "deleting a camera that has sightings is rejected by ON DELETE RESTRICT",
+          "deleting a target cascades to its match_candidates"
+        ]
+      },
+      {
+        "target": "batch insert performance",
+        "cases": [
+          "inserting 10,000 sightings via add_batch completes within a documented time budget and produces the correct row count",
+          "marked 'slow'; the budget is asserted loosely to avoid flakiness on CI hardware"
+        ]
+      },
+      {
+        "target": "vector search correctness",
+        "cases": [
+          "with a seeded set of embeddings, the known-nearest vector is returned first",
+          "HNSW index is actually used (verify via EXPLAIN output containing an index scan)",
+          "results are consistent between an index scan and a sequential scan on the same data"
+        ]
+      }
+    ]
+  },
+
+  "exit_criteria": [
+    "Every required_query_pattern is implemented and covered by a conformance test",
+    "The conformance suite passes identically against Postgres and in-memory implementations",
+    "Migrations are reversible and verified by test",
+    "No raw driver exceptions escape the repository layer — all are wrapped in StorageError",
+    "In-memory fakes are complete enough that later stages need no database for unit tests"
+  ],
+
+  "deliverables": [
+    "src/multicam_tracker/db/{__init__,orm,session,mappers}.py",
+    "src/multicam_tracker/db/repositories/{__init__,protocols,camera,sighting,target,match,trajectory}.py",
+    "alembic.ini", "migrations/env.py", "migrations/versions/0001_initial_schema.py",
+    "tests/fixtures/fake_repositories.py",
+    "tests/conformance/test_repository_conformance.py",
+    "tests/unit/db/test_mappers.py", "tests/unit/db/test_session.py",
+    "tests/integration/db/test_migrations.py", "tests/integration/db/test_constraints.py", "tests/integration/db/test_vector_search.py"
+  ]
+}

@@ -1,0 +1,212 @@
+# =============================================================================
+# multicam-tracker — .gitignore
+# NOTE: `src/multicam_tracker/models/` holds Pydantic domain models and MUST
+# stay tracked. Never add a bare `models/` rule here. ML weights are excluded
+# by extension (*.pt, *.onnx, ...) instead.
+# =============================================================================
+
+# --- Python bytecode / build artifacts ---------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+sdist/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# --- Virtual environments -----------------------------------------------------
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+pyvenv.cfg
+
+# --- uv / pip -----------------------------------------------------------------
+# uv.lock IS committed (reproducible builds) — do not ignore it.
+.uv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# --- Secrets / configuration --------------------------------------------------
+# .env.example is committed per the global contract; real .env files never are.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.yaml
+secrets.json
+credentials.json
+
+# --- Testing / coverage -------------------------------------------------------
+.pytest_cache/
+.cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+nosetests.xml
+junit*.xml
+report.xml
+.hypothesis/
+.tox/
+.nox/
+cover/
+
+# --- Type checking / linting --------------------------------------------------
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+.pylint.d/
+
+# --- ML model weights & artifacts ---------------------------------------------
+# Weights are large binaries fetched at setup time, never committed.
+*.pt
+*.pth
+*.onnx
+*.engine
+*.trt
+*.tflite
+*.pb
+*.caffemodel
+*.weights
+*.safetensors
+*.bin
+weights/
+checkpoints/
+runs/
+wandb/
+mlruns/
+lightning_logs/
+.paddleocr/
+paddle_inference_models/
+
+# --- Media, datasets, and generated storage -----------------------------------
+# Sample media under tests/fixtures/ is re-included at the bottom of this file
+# so integration tests can ship small, deterministic inputs.
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+*.flv
+*.wmv
+*.m4v
+*.ts
+*.mts
+*.h264
+*.h265
+
+data/
+datasets/
+storage/
+media/
+thumbnails/
+thumbs/
+frames/
+clips/
+*.veri
+VeRi*/
+
+# --- Database -----------------------------------------------------------------
+*.db
+*.sqlite
+*.sqlite3
+*.sql.gz
+*.dump
+pgdata/
+postgres-data/
+
+# --- Docker -------------------------------------------------------------------
+docker-compose.override.yml
+docker-compose.override.yaml
+.docker/
+
+# --- Logs & runtime state -----------------------------------------------------
+*.log
+logs/
+*.pid
+*.seed
+*.pid.lock
+tmp/
+temp/
+scratch/
+.checkpoints/
+
+# --- Notebooks ----------------------------------------------------------------
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# --- Frontend (web/) ----------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# --- Editors / IDEs -----------------------------------------------------------
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/tasks.json
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-workspace
+*.sublime-project
+
+# --- Claude Code --------------------------------------------------------------
+.claude/settings.local.json
+
+# --- OS -----------------------------------------------------------------------
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+desktop.ini
+$RECYCLE.BIN/
+*.lnk
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+# Linux
+.directory
+.Trash-*
+.nfs*
+
+# --- Re-included: shared test fixtures ----------------------------------------
+# Must stay LAST: gitignore is order-dependent, so this negation overrides the
+# media/data rules above and lets small sample clips ship with the repo.
+!tests/fixtures/**
+# ...but never re-admit generated junk that slipped under that umbrella.
+tests/fixtures/**/__pycache__/
+tests/fixtures/**/*.py[cod]
+tests/fixtures/**/.DS_Store
+tests/fixtures/**/Thumbs.db

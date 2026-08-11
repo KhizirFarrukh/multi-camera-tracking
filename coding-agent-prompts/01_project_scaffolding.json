@@ -1,0 +1,153 @@
+{
+  "stage": 1,
+  "stage_id": "project_scaffolding",
+  "title": "Project Scaffolding, Tooling, and Continuous Integration",
+  "inherits": "00_GLOBAL_CONTRACT.json",
+  "depends_on": [],
+  "estimated_complexity": "low",
+
+  "objective": "Create the repository skeleton, dependency management, configuration system, logging, exception hierarchy, and CI pipeline so that every subsequent stage has a consistent, enforced foundation to build on.",
+
+  "context_for_agent": "Nothing exists yet. This stage produces no domain logic — it produces the environment in which domain logic will be written. Get the guardrails (typing, linting, coverage) strict now, because loosening them later is easy and tightening them later is not.",
+
+  "tasks": [
+    {
+      "id": "1.1",
+      "name": "Repository skeleton",
+      "detail": "Create the full directory structure defined in the global contract's repository_layout. Every Python package directory gets an __init__.py. Create empty-but-present tests/unit/ and tests/integration/ trees mirroring src/."
+    },
+    {
+      "id": "1.2",
+      "name": "Dependency management",
+      "detail": "Create pyproject.toml declaring the project, Python 3.11+ requirement, and dependency groups: 'core' (pydantic, sqlalchemy, alembic, fastapi, uvicorn, psycopg, pgvector, pyyaml, structlog), 'vision' (opencv-python, ultralytics, paddleocr/paddlepaddle, torch, torchvision, numpy, pillow), 'dev' (pytest, pytest-asyncio, pytest-cov, pytest-mock, hypothesis, freezegun, testcontainers, ruff, mypy). Vision dependencies MUST be an optional extra so that logic-only stages and CI can install a lightweight environment. Pin major versions."
+    },
+    {
+      "id": "1.3",
+      "name": "Configuration system",
+      "detail": "Implement src/multicam_tracker/config.py using Pydantic Settings. Define a Settings class with nested sections: database (host, port, user, password, dbname, pool size), storage (thumbnail_dir, media_dir), vision (model paths, device 'cpu'|'cuda', detection frame sample rate), thresholds (loaded from config/thresholds.yaml), retention (sighting_ttl_days, thumbnail_ttl_days), api (host, port, auth_enabled). Settings load from environment variables prefixed MCT_ with nested delimiter '__', falling back to a .env file. Provide a cached get_settings() accessor. Create config/thresholds.yaml populated with the default_thresholds from the global contract, and a committed .env.example."
+    },
+    {
+      "id": "1.4",
+      "name": "Exception hierarchy",
+      "detail": "Implement src/multicam_tracker/exceptions.py with root MulticamTrackerError(Exception) and subclasses: ConfigurationError, ValidationError, StorageError, TopologyError, MatchingError, IngestError, VisionError, PathReconstructionError, AuthorizationError. Each accepts a message and an optional context dict serialized into the string representation."
+    },
+    {
+      "id": "1.5",
+      "name": "Structured logging",
+      "detail": "Implement src/multicam_tracker/logging_config.py using structlog. JSON output in production, human-readable console output when a DEBUG/dev flag is set. Provide get_logger(name). Bind a correlation_id contextvar so a single pipeline run or API request can be traced across modules. Configure stdlib logging to route through structlog so third-party library logs are captured too."
+    },
+    {
+      "id": "1.6",
+      "name": "Clock abstraction",
+      "detail": "Implement src/multicam_tracker/clock.py exposing a Clock protocol with now_utc() -> datetime, a SystemClock implementation, and a FixedClock test implementation. All code that needs the current time MUST take a Clock via dependency injection rather than calling datetime.now() directly. This is what makes time-dependent tests deterministic."
+    },
+    {
+      "id": "1.7",
+      "name": "Lint, type, and test configuration",
+      "detail": "Configure ruff (line length 100, enable E, F, I, N, UP, B, SIM, RUF rulesets) and mypy (strict = true for src/multicam_tracker, ignore_missing_imports for CV libs) in pyproject.toml. Configure pytest with testpaths, markers ('unit', 'integration', 'slow', 'requires_gpu', 'requires_models'), asyncio_mode=auto, and coverage settings with fail_under=85."
+    },
+    {
+      "id": "1.8",
+      "name": "Docker compose for local development",
+      "detail": "Create docker-compose.yml defining a postgres service using the pgvector/pgvector:pg16 image with a named volume, healthcheck, and environment wired to match the default settings. Do not containerize the app itself yet — that is stage 19."
+    },
+    {
+      "id": "1.9",
+      "name": "Developer scripts and Makefile",
+      "detail": "Create a Makefile (or scripts/) with targets: install, lint, format, typecheck, test-unit, test-integration, test-all, db-up, db-down, ci (runs lint + typecheck + test-all)."
+    },
+    {
+      "id": "1.10",
+      "name": "CI pipeline",
+      "detail": "Create .github/workflows/ci.yml running on push and pull request: checkout, install Python 3.11, install core+dev deps (NOT vision extras, to keep CI fast), run ruff check, ruff format --check, mypy, pytest with coverage, and fail the build if coverage drops below 85%. Add a separate optional job gated on a label that installs vision extras and runs tests marked 'requires_models'."
+    },
+    {
+      "id": "1.11",
+      "name": "Documentation seed",
+      "detail": "Create README.md (project overview, quickstart, architecture diagram in mermaid, how to run tests) and docs/ARCHITECTURE.md restating the pipeline stages. Create CONTRIBUTING.md documenting the stage-based build process and commit convention."
+    }
+  ],
+
+  "tests_substage": {
+    "id": "1.T",
+    "description": "Prove the foundation itself works. These tests are small but they catch an entire class of later failures.",
+    "unit_tests": [
+      {
+        "target": "config.Settings",
+        "cases": [
+          "loads defaults successfully when no environment variables are set",
+          "environment variables with MCT_ prefix override defaults",
+          "nested delimiter correctly populates nested sections (e.g. MCT_DATABASE__PORT)",
+          "thresholds.yaml values are loaded and accessible",
+          "missing required setting raises ConfigurationError with the offending field name",
+          "invalid type (e.g. port='abc') raises a validation error rather than coercing silently",
+          "get_settings() returns a cached instance (same object identity on repeat call)"
+        ]
+      },
+      {
+        "target": "exceptions",
+        "cases": [
+          "every defined exception subclasses MulticamTrackerError",
+          "context dict is included in the string representation",
+          "exception with no context renders cleanly without a trailing separator"
+        ]
+      },
+      {
+        "target": "logging_config",
+        "cases": [
+          "get_logger returns a bound logger",
+          "emitted log record in JSON mode is valid parseable JSON",
+          "correlation_id bound in context appears in subsequent log records",
+          "correlation_id is isolated between concurrent async contexts"
+        ]
+      },
+      {
+        "target": "clock",
+        "cases": [
+          "SystemClock.now_utc() returns a timezone-aware datetime in UTC",
+          "FixedClock returns the exact configured instant on every call",
+          "FixedClock can be advanced and reflects the new instant"
+        ]
+      }
+    ],
+    "integration_tests": [
+      {
+        "target": "docker-compose postgres service",
+        "cases": [
+          "postgres container starts and becomes healthy",
+          "a plain connection can be established using the settings-derived DSN",
+          "the vector extension can be created successfully (CREATE EXTENSION IF NOT EXISTS vector)"
+        ],
+        "note": "Mark these 'integration'. Use testcontainers so CI does not depend on a developer's local compose stack."
+      },
+      {
+        "target": "tooling",
+        "cases": [
+          "ruff check passes on the freshly scaffolded repository",
+          "mypy strict passes on the freshly scaffolded repository",
+          "the full pytest suite runs green and reports coverage"
+        ],
+        "note": "Implement these as a CI assertion (the ci make target) rather than as pytest tests calling subprocesses."
+      }
+    ]
+  },
+
+  "exit_criteria": [
+    "A fresh clone plus 'make install' produces a working environment",
+    "'make ci' passes end to end with zero lint, type, or test failures",
+    "'make db-up' brings up Postgres with pgvector available",
+    "No hardcoded credentials, paths, hosts, or thresholds exist anywhere in src/",
+    "Coverage gate is active and enforced at 85%"
+  ],
+
+  "deliverables": [
+    "pyproject.toml", "Makefile", "docker-compose.yml", ".env.example", ".gitignore",
+    "config/thresholds.yaml",
+    "src/multicam_tracker/{__init__,config,exceptions,logging_config,clock}.py",
+    ".github/workflows/ci.yml",
+    "README.md", "docs/ARCHITECTURE.md", "CONTRIBUTING.md",
+    "tests/unit/test_config.py", "tests/unit/test_exceptions.py", "tests/unit/test_logging_config.py", "tests/unit/test_clock.py",
+    "tests/integration/test_database_available.py",
+    "tests/conftest.py"
+  ]
+}

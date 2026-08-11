@@ -1,0 +1,179 @@
+{
+  "stage": 4,
+  "stage_id": "camera_topology",
+  "title": "Camera Topology, Geospatial Model, and Travel-Time Constraints",
+  "inherits": "00_GLOBAL_CONTRACT.json",
+  "depends_on": [1, 2, 3],
+  "estimated_complexity": "medium",
+
+  "objective": "Model the camera network as a graph with plausible travel-time windows between cameras, and expose the plausibility queries that let the matching and path-reconstruction stages prune candidates cheaply instead of searching all sightings everywhere.",
+
+  "context_for_agent": "This is the component that turns an unbounded search ('where else did this car appear?') into a bounded one ('which cameras could it have reached between 10:02 and 10:07?'). Its correctness directly determines both false-positive rate and query cost. Keep it pure and dependency-light — it should be testable with no database and no video.",
+
+  "tasks": [
+    {
+      "id": "4.1",
+      "name": "Topology configuration format",
+      "detail": "Define config/topology.yaml with two sections: 'cameras' (list of Camera fields) and 'links' (list of CameraLink fields). Support an optional 'defaults' block specifying a default speed model used to auto-derive travel times for links that omit them. Write a documented example file with at least 5 cameras and a mix of explicit and derived links, including one deliberately one-directional link (e.g. a one-way street)."
+    },
+    {
+      "id": "4.2",
+      "name": "Topology loader and validator",
+      "detail": "Implement load_topology(path) -> Topology. Validation must reject: duplicate camera_ids, links referencing unknown cameras, self-links, links whose max_travel_time_sec <= min_travel_time_sec, and duplicate link definitions for the same ordered pair. Raise TopologyError with a message naming the offending entries. Warn (do not fail) on: cameras with no links at all (isolated nodes), and links whose implied speed exceeds a configurable sanity limit (e.g. distance/min_travel_time > 200 km/h)."
+    },
+    {
+      "id": "4.3",
+      "name": "Travel-time derivation",
+      "detail": "When a link omits explicit times, derive them from the great-circle distance between the two cameras and a configurable speed range (default: min_travel_time from max_speed_kph, max_travel_time from min_speed_kph, plus a configurable additive slack in seconds for stops and signals). Apply a configurable road-winding factor (default 1.3) to convert straight-line distance to estimated road distance. All factors live in config and are documented. Mark derived links with a 'derived: true' flag so the source of every constraint is auditable."
+    },
+    {
+      "id": "4.4",
+      "name": "Topology graph structure",
+      "detail": "Implement a Topology class holding cameras and links with efficient adjacency lookup. Expand bidirectional links into both directed edges at load time so downstream code always works with directed edges. Provide: get_camera(id), list_cameras(), neighbors(camera_id) -> list[CameraLink], get_link(from_id, to_id) -> CameraLink | None, has_link(from_id, to_id) -> bool."
+    },
+    {
+      "id": "4.5",
+      "name": "Plausibility queries",
+      "detail": "Implement the core API used by later stages: (a) reachable_from(camera_id, departure_time, max_horizon_sec) -> list[ReachableCamera] where each entry carries the target camera and the absolute arrival TimeWindow; (b) is_transition_plausible(from_camera, to_camera, elapsed_sec) -> PlausibilityResult with fields plausible: bool, reason: str enum ('within_window' | 'too_fast' | 'too_slow' | 'no_link' | 'same_camera'), and margin_sec (how far outside the window, 0 if inside); (c) plausibility_score(from_camera, to_camera, elapsed_sec) -> float in [0,1] returning 1.0 inside the window and decaying smoothly outside it according to a configurable decay function, so scoring is graded rather than binary."
+    },
+    {
+      "id": "4.6",
+      "name": "Multi-hop reachability",
+      "detail": "Implement reachable_within(camera_id, departure_time, max_horizon_sec, max_hops) using a time-constrained breadth-first/Dijkstra-style search over the directed graph. This supports the case where a target passes through an uncovered area and reappears at a camera two or three hops away. Return, for each reachable camera, the earliest and latest plausible arrival times and the hop count. Guard against exponential blowup with a configurable node-visit cap and cycle handling."
+    },
+    {
+      "id": "4.7",
+      "name": "Same-camera handling",
+      "detail": "Define and implement explicit semantics for repeat sightings on the same camera (a vehicle circling back, or simply lingering in frame). Provide a configurable min_redetection_gap_sec below which two sightings on the same camera are considered the same pass rather than two separate transits. Document the choice; later stages depend on it."
+    },
+    {
+      "id": "4.8",
+      "name": "Coverage analysis utilities",
+      "detail": "Implement helpers used by stage 08 and the UI: find_isolated_cameras(), graph_diameter_sec(), and describe_gap(from_camera, to_camera, elapsed_sec) producing a human-readable explanation of why a hop was implausible (e.g. 'no known route between cam_01 and cam_07' or 'arrived 240s faster than the minimum plausible transit of 300s')."
+    },
+    {
+      "id": "4.9",
+      "name": "Topology persistence sync",
+      "detail": "Implement sync_topology_to_db(topology, camera_repo, link_repo) which upserts the file-defined topology into the database, and load_topology_from_db(...) for the runtime path. The YAML file is the authoring format; the database is the runtime source of truth. Syncing must be idempotent and must not delete cameras that still have sightings (raise TopologyError instead, listing them)."
+    }
+  ],
+
+  "tests_substage": {
+    "id": "4.T",
+    "description": "Topology bugs are silent — they produce plausible-looking but wrong paths. Test the boundaries of every time window explicitly.",
+    "unit_tests": [
+      {
+        "target": "topology loader",
+        "cases": [
+          "valid example topology loads with the expected camera and link counts",
+          "duplicate camera_id raises TopologyError naming the id",
+          "link referencing an unknown camera raises TopologyError naming both the link and the missing camera",
+          "self-link rejected",
+          "duplicate link for the same ordered pair rejected",
+          "max <= min travel time rejected with both values in the message",
+          "isolated camera produces a warning but loads successfully",
+          "implausible implied speed produces a warning but loads successfully",
+          "bidirectional link expands into exactly two directed edges",
+          "one-directional link expands into exactly one directed edge and has_link is False in the reverse direction",
+          "empty topology file raises TopologyError",
+          "malformed YAML raises TopologyError rather than a raw parser exception"
+        ]
+      },
+      {
+        "target": "travel-time derivation",
+        "cases": [
+          "explicit times on a link are preserved and NOT overwritten by derivation",
+          "omitted times are derived and the link is flagged derived=true",
+          "derived min_travel_time corresponds to the configured max speed and derived max to the min speed",
+          "winding factor is applied to the straight-line distance",
+          "additive slack is included in the max bound",
+          "two cameras at identical coordinates produce a non-zero, finite max_travel_time (guard against divide-by-zero)"
+        ]
+      },
+      {
+        "target": "is_transition_plausible",
+        "cases": [
+          "elapsed exactly equal to min_travel_time is plausible (boundary, inclusive)",
+          "elapsed exactly equal to max_travel_time is plausible (boundary, inclusive)",
+          "elapsed one second below min returns too_fast with margin_sec == 1",
+          "elapsed one second above max returns too_slow with correct margin_sec",
+          "unlinked camera pair returns no_link",
+          "same camera returns same_camera",
+          "negative elapsed time (out-of-order timestamps) raises or returns implausible — document and test the chosen behavior"
+        ]
+      },
+      {
+        "target": "plausibility_score",
+        "cases": [
+          "returns exactly 1.0 anywhere inside the window",
+          "decays monotonically as elapsed moves further outside the window in both directions",
+          "never returns a value outside [0,1] for any input including extreme values",
+          "returns the configured floor value for an unlinked pair rather than raising"
+        ]
+      },
+      {
+        "target": "reachable_from / reachable_within",
+        "cases": [
+          "single-hop reachability returns exactly the direct neighbors within the horizon",
+          "a neighbor whose min_travel_time exceeds the horizon is excluded",
+          "two-hop reachability with max_hops=1 excludes the two-hop camera; with max_hops=2 includes it",
+          "arrival windows for a two-hop path correctly compound (min sums with min, max sums with max)",
+          "a cycle in the graph terminates without infinite looping",
+          "node-visit cap is respected and the result is flagged as truncated",
+          "results include hop count for every reachable camera",
+          "reachability from an isolated camera returns an empty list"
+        ]
+      },
+      {
+        "target": "same-camera semantics",
+        "cases": [
+          "two sightings on one camera within min_redetection_gap_sec are treated as one pass",
+          "two sightings just beyond the gap are treated as separate transits"
+        ]
+      },
+      {
+        "target": "coverage utilities",
+        "cases": [
+          "find_isolated_cameras identifies exactly the unlinked cameras",
+          "describe_gap produces distinct, human-readable messages for no_link, too_fast, and too_slow cases"
+        ]
+      }
+    ],
+    "property_based_tests": [
+      "For randomly generated topologies: every camera returned by reachable_from is also reported as a neighbor by has_link when hop count is 1.",
+      "plausibility_score is always in [0,1] for arbitrary elapsed values including negatives, zero, and very large values.",
+      "Expanding bidirectional links twice (idempotency check) does not create duplicate edges."
+    ],
+    "integration_tests": [
+      {
+        "target": "topology persistence sync",
+        "cases": [
+          "sync_topology_to_db inserts all cameras and links into a real database",
+          "running sync twice is idempotent — no duplicates, no errors",
+          "modifying a link in YAML and re-syncing updates the existing row rather than inserting a new one",
+          "removing a camera that has sightings raises TopologyError listing that camera",
+          "removing a camera with no sightings succeeds",
+          "load_topology_from_db reproduces a Topology equal to the one loaded from the YAML file"
+        ]
+      }
+    ]
+  },
+
+  "exit_criteria": [
+    "The example topology file loads, validates, and syncs to the database cleanly",
+    "Every plausibility boundary is covered by an explicit test at the exact boundary value",
+    "Multi-hop reachability terminates on cyclic graphs and respects its visit cap",
+    "Every derived travel time is traceable to its inputs via the derived flag and documented factors",
+    "The module has no database or filesystem dependency in its core query path (pure in-memory graph)"
+  ],
+
+  "deliverables": [
+    "config/topology.yaml (documented example)",
+    "src/multicam_tracker/topology/{__init__,loader,graph,plausibility,reachability,coverage,sync}.py",
+    "tests/unit/topology/ (one module per source module)",
+    "tests/integration/topology/test_topology_sync.py",
+    "tests/fixtures/topology_valid.yaml",
+    "tests/fixtures/topology_invalid_*.yaml (one per validation failure mode)",
+    "docs/TOPOLOGY.md explaining the authoring format and the derivation model"
+  ]
+}

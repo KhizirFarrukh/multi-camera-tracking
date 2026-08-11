@@ -1,0 +1,187 @@
+{
+  "stage": 17,
+  "stage_id": "visualization_ui",
+  "title": "Map, Timeline, and Trajectory Visualization Interface",
+  "inherits": "00_GLOBAL_CONTRACT.json",
+  "depends_on": [1, 8, 16],
+  "estimated_complexity": "medium-high",
+
+  "objective": "Present reconstructed trajectories as a map and synchronized timeline that make the movement immediately legible while keeping uncertainty visible — so a user reads not just where the system thinks the object went, but how strongly each part of that claim is supported.",
+
+  "context_for_agent": "The visual design carries a real responsibility here. A clean line drawn between two camera pins reads as fact, even when the underlying match was a 0.6-confidence fuzzy plate read across a coverage gap. Every uncertainty the earlier stages carefully computed must remain visible in the UI, or those computations were pointless. Design uncertainty into the visual language from the start rather than adding a confidence number in a corner.",
+
+  "design_direction": {
+    "read_first": "Read /mnt/skills/public/frontend-design/SKILL.md before writing any UI code.",
+    "principles": [
+      "Confidence is encoded visually — line opacity, weight, and style vary with hop confidence; a dashed or faded segment reads as uncertain without needing a legend lookup",
+      "Coverage gaps are drawn as explicit gaps rather than as continuous lines, so the map never implies observation where there was none",
+      "Ambiguous trajectories show alternatives simultaneously rather than presenting the top path alone",
+      "The interface is dense and functional rather than decorative — this is an analysis tool, and screen space belongs to the data",
+      "Every claim on screen is traceable to its evidence in one interaction"
+    ]
+  },
+
+  "tasks": [
+    {
+      "id": "17.1",
+      "name": "Map view",
+      "detail": "Implement a Leaflet map showing camera positions as markers (distinguishing cameras that saw the target from those that did not, and those that were offline), the trajectory as a polyline between sighting locations, and directional arrows indicating travel direction. Support pan, zoom, fit-to-trajectory, and a configurable base tile layer including an offline-capable option for deployments without external network access."
+    },
+    {
+      "id": "17.2",
+      "name": "Confidence-aware rendering",
+      "detail": "Style each polyline segment by its hop confidence: high-confidence segments solid and prominent, medium translucent, low dashed and faint. Segments spanning a coverage gap render distinctly (e.g. a dotted line with a gap marker) and carry a tooltip explaining the gap reason from stage 8. A user must be able to distinguish an observed hop from an inferred one at a glance, without consulting a legend."
+    },
+    {
+      "id": "17.3",
+      "name": "Timeline view",
+      "detail": "Implement a horizontal timeline synchronized with the map: one row per camera, sighting markers positioned by timestamp, and elapsed intervals between hops labeled. Selecting a sighting highlights it on both views simultaneously. Support zooming the time axis from seconds to days, and clearly indicate periods where a camera was offline versus periods where it simply saw nothing."
+    },
+    {
+      "id": "17.4",
+      "name": "Sighting detail panel",
+      "detail": "On selecting a sighting, show its thumbnail, camera name, corrected timestamp with the applied offset noted, plate read with per-character confidence highlighting (uncertain characters visually marked, using the character confidences preserved in stage 12), detection and match confidence, match method, and the inclusion reason from stage 8's explanation. This panel is where a user verifies the system's claim against the actual image."
+    },
+    {
+      "id": "17.5",
+      "name": "Alternatives and ambiguity display",
+      "detail": "When a trajectory is flagged ambiguous, present the alternative paths as toggleable overlays with their scores and the margin between them, and state plainly that the evidence does not distinguish them. Do not bury alternatives behind a secondary view — an ambiguous result presented as a single confident line is the most damaging failure this interface can produce."
+    },
+    {
+      "id": "17.6",
+      "name": "Search interface",
+      "detail": "Implement the search form: plate entry with live normalization preview (showing the user exactly what will be searched), time range selection with sensible presets, camera subset selection, and a confirmed-only toggle. Show search progress for asynchronous searches, and render results incrementally as they arrive rather than blocking on completion."
+    },
+    {
+      "id": "17.7",
+      "name": "Integrity and caveat surfacing",
+      "detail": "Display temporal integrity warnings from stage 9 prominently and inline with the trajectory rather than as a dismissible banner. If a camera's clock verification is stale or drifting, the affected segments must be visually marked, because those specific hops are the ones whose ordering may be wrong."
+    },
+    {
+      "id": "17.8",
+      "name": "Live view",
+      "detail": "Implement a live mode subscribing to the SSE alert stream: new sightings appear on the map as they arrive, the trajectory extends in place, and new alerts surface visibly. Include a clear indicator distinguishing live mode from historical review, and handle stream disconnection with an explicit reconnecting state rather than a silently frozen display."
+    },
+    {
+      "id": "17.9",
+      "name": "Export",
+      "detail": "Support exporting a trajectory as GeoJSON, as a CSV of sightings, and as a printable report including the map image, timeline, thumbnails, confidences, and caveats. Exports must carry the same caveats as the on-screen view — a report that drops the uncertainty is worse than no report."
+    },
+    {
+      "id": "17.10",
+      "name": "Accessibility and responsiveness",
+      "detail": "Meet WCAG AA: keyboard navigation for all interactions, screen-reader labels for map and timeline elements, and encoding that never relies on color alone (confidence uses line style and weight in addition to opacity, so it remains legible to colorblind users). Support tablet and desktop viewports."
+    }
+  ],
+
+  "tests_substage": {
+    "id": "17.T",
+    "description": "Test the data transformations exhaustively as pure functions, then test rendering behavior with a headless browser. The critical assertions are that uncertainty survives every transformation from API response to pixels.",
+    "unit_tests": [
+      {
+        "target": "data transformation (pure JS functions)",
+        "cases": [
+          "an API trajectory response converts to the correct GeoJSON feature collection",
+          "hop confidence maps to the documented style parameters at each threshold band",
+          "boundary confidence values map to the correct band on each side",
+          "a gap hop produces the gap style rather than the low-confidence style — these are distinct concepts and must render distinctly",
+          "a single-sighting trajectory renders a marker with no polyline and does not error",
+          "an empty trajectory renders an empty state rather than a broken view",
+          "timeline positions are computed correctly across the full zoom range",
+          "an out-of-order or malformed response is rejected with a clear error rather than rendering partially"
+        ]
+      },
+      {
+        "target": "plate confidence rendering",
+        "cases": [
+          "per-character confidences map to the correct per-character highlighting",
+          "a plate with uniform high confidence shows no uncertainty marking",
+          "a plate with one low-confidence character marks exactly that character",
+          "a null plate renders the documented no-read state rather than an empty string"
+        ]
+      },
+      {
+        "target": "search form",
+        "cases": [
+          "the normalization preview matches stage 6's normalizer exactly for a set of shared test vectors — verified against the same fixtures the Python tests use, so the two implementations cannot drift apart",
+          "an invalid time range (end before start) is rejected before submission",
+          "presets populate the expected ranges",
+          "an empty plate with no other criteria is rejected with a clear message"
+        ]
+      }
+    ],
+    "integration_tests": [
+      {
+        "target": "rendering (headless browser)",
+        "cases": [
+          "a trajectory renders with the expected number of markers and segments",
+          "high and low confidence segments render with visually distinct, assertable style attributes",
+          "gap segments render distinctly from both high and low confidence segments",
+          "selecting a map marker highlights the corresponding timeline entry and opens the detail panel",
+          "selecting a timeline entry highlights the corresponding map marker",
+          "ambiguous trajectories render all alternatives with their scores visible without extra navigation",
+          "integrity warnings render inline and mark the affected segments",
+          "the empty state renders when a search returns no results"
+        ]
+      },
+      {
+        "target": "live mode",
+        "cases": [
+          "SSE-delivered sightings appear on the map without a page reload",
+          "the trajectory extends in place rather than re-rendering wholesale",
+          "stream disconnection shows a reconnecting indicator",
+          "reconnection resumes updates and backfills anything missed",
+          "the live indicator is clearly distinguishable from historical mode"
+        ]
+      },
+      {
+        "target": "export",
+        "cases": [
+          "GeoJSON export validates against the GeoJSON schema and round-trips to an equivalent trajectory",
+          "CSV export contains every sighting with correct timestamps and confidences",
+          "the printable report includes confidences, gaps, and integrity caveats — explicitly asserted, since dropping caveats on export is the likeliest silent failure",
+          "export of an ambiguous trajectory includes the alternatives"
+        ]
+      },
+      {
+        "target": "accessibility",
+        "cases": [
+          "automated accessibility audit passes at WCAG AA",
+          "all interactive elements are reachable and operable by keyboard alone",
+          "map and timeline elements expose screen-reader labels",
+          "confidence encoding remains distinguishable in a simulated grayscale rendering, proving color is not the sole channel",
+          "focus order is logical and focus is visible throughout"
+        ]
+      },
+      {
+        "target": "API contract alignment",
+        "cases": [
+          "the UI consumes real API responses from a running test server, not hand-written mocks",
+          "a schema change in the API that would break the UI causes a test failure — the contract test that prevents silent drift"
+        ]
+      }
+    ]
+  },
+
+  "exit_criteria": [
+    "Confidence and coverage gaps are visually distinguishable without a legend and without relying on color",
+    "Ambiguous trajectories always present their alternatives",
+    "Integrity caveats appear inline and mark the affected segments",
+    "Exports preserve every caveat present on screen",
+    "The JS plate normalizer matches the Python implementation on shared test vectors",
+    "WCAG AA audit passes"
+  ],
+
+  "deliverables": [
+    "web/index.html", "web/search.html", "web/live.html",
+    "web/js/{api_client,map_view,timeline_view,detail_panel,confidence_style,normalize,export,live_stream}.js",
+    "web/css/",
+    "tests/unit/web/ (JS unit tests)",
+    "tests/integration/web/test_rendering.spec.js",
+    "tests/integration/web/test_live_mode.spec.js",
+    "tests/integration/web/test_accessibility.spec.js",
+    "tests/integration/web/test_api_contract.spec.js",
+    "tests/fixtures/shared/normalize_vectors.json (shared between Python and JS tests)",
+    "docs/UI.md documenting the visual language of confidence"
+  ]
+}

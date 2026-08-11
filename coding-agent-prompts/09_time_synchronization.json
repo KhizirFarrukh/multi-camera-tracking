@@ -1,0 +1,192 @@
+{
+  "stage": 9,
+  "stage_id": "time_synchronization",
+  "title": "Timestamp Synchronization, Clock Drift Correction, and Temporal Integrity",
+  "inherits": "00_GLOBAL_CONTRACT.json",
+  "depends_on": [1, 2, 3, 4, 5, 8],
+  "estimated_complexity": "medium",
+
+  "objective": "Guarantee that timestamps from independent cameras are comparable, by detecting and correcting clock offsets, deriving trustworthy timestamps from varied sources, and refusing to reconstruct paths from data whose temporal integrity cannot be established.",
+
+  "context_for_agent": "The entire premise of the system is 'synchronized timestamps tell us where the object went'. If Camera 3's clock is 90 seconds fast, the reconstructed route will be confidently wrong in a way no downstream logic can detect. This stage is small in code and large in consequence. Fail loudly on unverifiable time rather than proceeding on optimistic assumptions.",
+
+  "tasks": [
+    {
+      "id": "9.1",
+      "name": "Timestamp source abstraction",
+      "detail": "Define a TimestampSource protocol with implementations: StreamClockSource (timestamps from RTSP/RTP packet time or wall clock at capture), FileMetadataSource (container creation time plus frame index divided by fps), FilenameSource (parsing a configurable filename timestamp pattern), OverlayOcrSource (reading a burned-in timestamp overlay from the frame, stage 11 supplies the OCR), and ManualOffsetSource (operator-supplied start time). Each reports a reliability tier (high | medium | low) that propagates into confidence, because a timestamp parsed from a filename deserves less trust than one from a synchronized stream."
+    },
+    {
+      "id": "9.2",
+      "name": "Frame-index to timestamp derivation",
+      "detail": "Implement derive_timestamp(source_start, frame_index, fps) with correct handling of variable frame rate (use per-frame PTS when available rather than assuming constant fps), dropped frames, and fps values that are non-integer rationals (29.97 = 30000/1001). Use exact rational arithmetic rather than float accumulation — naive float accumulation drifts by seconds over a long video, which is precisely the error class this stage exists to eliminate."
+    },
+    {
+      "id": "9.3",
+      "name": "Offset storage and application",
+      "detail": "Apply Camera.clock_offset_ms to every raw timestamp at ingestion, populating raw_timestamp, clock_offset_applied_ms, and timestamp_utc per the Sighting contract. Correction happens once, at a single well-defined boundary — never scattered through downstream code. Provide recompute_offsets(camera_id, new_offset_ms) which updates existing stored sightings transactionally and records the change in the audit log."
+    },
+    {
+      "id": "9.4",
+      "name": "Offset estimation from reference events",
+      "detail": "Implement estimate_offset(reference_passes) where a reference vehicle with a known plate traverses a known route: given confirmed sightings and the topology's expected travel times, solve for the per-camera offsets that best fit the expected timing (least-squares over the camera graph, with one camera pinned as the reference clock). Report residuals and a confidence interval per camera; refuse to emit an estimate when the system is underdetermined (too few reference passes) rather than returning an arbitrary solution."
+    },
+    {
+      "id": "9.5",
+      "name": "Drift detection",
+      "detail": "Implement detect_drift(camera_id, window) which looks for systematic bias in a camera's residuals against topology expectations over time: consistently arriving 'too early' from every neighbor is the signature of a fast clock, not of fast driving. Distinguish constant offset from linear drift (a clock gaining N ms/hour) and report the fitted rate. Emit a DriftAlert when the magnitude exceeds a configured threshold."
+    },
+    {
+      "id": "9.6",
+      "name": "NTP-style monitoring hook",
+      "detail": "Implement an optional periodic health check that records each camera's reported time against the server's time when the source protocol exposes it, storing a time-series of observed offsets. This is the preferred mechanism where available; the reference-event estimator is the fallback for cameras that expose nothing."
+    },
+    {
+      "id": "9.7",
+      "name": "Temporal integrity gate",
+      "detail": "Implement assert_temporal_integrity(camera_ids, window) which is called before path reconstruction and raises or warns when: a camera has no offset verification within a configured staleness period; an active DriftAlert exists; timestamp source reliability is 'low' for any camera in the query; or clock offsets differ across cameras by more than the smallest min_travel_time in the topology (at which point hop ordering itself is unreliable). The result must be attached to the Trajectory so the user sees the caveat rather than only the route."
+    },
+    {
+      "id": "9.8",
+      "name": "DST, leap seconds, and timezone hazards",
+      "detail": "Enforce that all raw timestamps carry an explicit timezone or an explicitly configured source timezone. Local-time sources spanning a DST transition must be resolved deterministically: ambiguous local times (the repeated hour) and non-existent local times (the skipped hour) each raise with a clear message naming the instant and the camera. Never guess. Document leap-second handling policy explicitly."
+    },
+    {
+      "id": "9.9",
+      "name": "Out-of-order and late arrival handling",
+      "detail": "For live ingestion, define and implement a watermark policy: a configurable lateness allowance, buffering of out-of-order records within it, and a defined action for records arriving beyond it (accept-and-recompute, or route to a late-arrivals queue). Emit metrics on late and dropped records so silent data loss is visible."
+    }
+  ],
+
+  "tests_substage": {
+    "id": "9.T",
+    "description": "Time bugs are the hardest to notice and the easiest to test precisely. Use frozen clocks and hand-computed expected instants throughout — no test may depend on the real current time.",
+    "unit_tests": [
+      {
+        "target": "timestamp derivation",
+        "cases": [
+          "frame 0 maps exactly to the source start time",
+          "frame N at constant 30 fps maps to start + N/30 seconds exactly",
+          "29.97 fps (30000/1001) over 100,000 frames matches the exact rational result — assert error below 1 ms, which naive float accumulation fails",
+          "variable frame rate with explicit PTS uses PTS and ignores nominal fps",
+          "dropped frames do not shift subsequent timestamps when PTS is available",
+          "fps of zero or negative raises IngestError",
+          "negative frame index raises"
+        ]
+      },
+      {
+        "target": "offset application",
+        "cases": [
+          "a positive offset shifts timestamp_utc later by exactly that amount",
+          "a negative offset shifts it earlier",
+          "zero offset leaves timestamp_utc equal to raw_timestamp",
+          "clock_offset_applied_ms is recorded and matches the camera's configured offset",
+          "the resulting Sighting satisfies the model's cross-field validator",
+          "applying correction twice does not double-shift (idempotency at the boundary)"
+        ]
+      },
+      {
+        "target": "offset estimation",
+        "cases": [
+          "with synthetic sightings generated using a known injected offset, the estimator recovers that offset within a stated tolerance",
+          "recovers offsets for multiple cameras simultaneously",
+          "the pinned reference camera is assigned exactly zero offset",
+          "an underdetermined system (too few reference passes) raises rather than returning an arbitrary solution",
+          "residuals are reported and are small for consistent data, large for inconsistent data",
+          "a single outlier reference pass does not dominate the estimate (robust fitting verified)"
+        ]
+      },
+      {
+        "target": "drift detection",
+        "cases": [
+          "a camera with a constant injected offset is detected with the correct sign and magnitude",
+          "a camera with linear drift is detected and the fitted rate matches the injected rate",
+          "a camera with no drift produces no alert",
+          "genuinely fast traffic (short travel times across all cameras) does not produce a false drift alert on any single camera",
+          "the alert threshold boundary is tested exactly"
+        ]
+      },
+      {
+        "target": "temporal integrity gate",
+        "cases": [
+          "stale verification produces the documented warning or error",
+          "an active drift alert blocks or flags reconstruction per the configured policy",
+          "a low-reliability timestamp source produces a caveat attached to the trajectory",
+          "offsets exceeding the smallest min_travel_time raise, since hop ordering is unreliable",
+          "a fully healthy camera set passes cleanly with no caveats",
+          "the integrity result is attached to the Trajectory and survives serialization"
+        ]
+      },
+      {
+        "target": "timezone and DST hazards",
+        "cases": [
+          "a naive timestamp without a configured source timezone raises",
+          "an ambiguous local time in the DST fall-back hour raises, naming the instant and camera",
+          "a non-existent local time in the DST spring-forward hour raises, naming the instant and camera",
+          "a correctly specified local time outside any transition converts to the expected UTC instant",
+          "a source in a non-integer-offset timezone (e.g. UTC+05:45) converts correctly",
+          "two cameras in different timezones produce comparable UTC timestamps for the same real instant"
+        ]
+      },
+      {
+        "target": "out-of-order handling",
+        "cases": [
+          "a record arriving out of order but within the lateness allowance is buffered and correctly ordered",
+          "a record beyond the allowance triggers the configured policy",
+          "late and dropped record metrics increment correctly",
+          "the watermark advances monotonically and never moves backward"
+        ]
+      }
+    ],
+    "property_based_tests": [
+      "For arbitrary offsets and raw timestamps: timestamp_utc - raw_timestamp always equals clock_offset_applied_ms exactly.",
+      "For arbitrary fps rationals and frame indices, derived timestamps are strictly monotonically increasing in frame index.",
+      "Timestamp derivation is exact under composition: deriving frame N directly equals deriving frame M then advancing N-M frames."
+    ],
+    "integration_tests": [
+      {
+        "target": "end-to-end drift correction",
+        "cases": [
+          "using the 'adversarial' scenario with injected clock drift, path reconstruction WITHOUT correction produces an incorrect ordering or an implausible hop",
+          "the same scenario WITH correction applied reproduces the ground-truth trajectory",
+          "this pair of tests is the definitive proof that the stage does its job — assert both directions explicitly"
+        ]
+      },
+      {
+        "target": "recompute_offsets",
+        "cases": [
+          "updating a camera's offset transactionally rewrites all its stored sightings' corrected timestamps",
+          "the operation is atomic — a simulated mid-operation failure leaves no partially-corrected data",
+          "the change is recorded in the audit log with old and new values",
+          "affected trajectories are flagged as requiring recomputation"
+        ]
+      },
+      {
+        "target": "real media timestamp extraction",
+        "cases": [
+          "container creation time is read correctly from a sample video file",
+          "a file with missing metadata falls back to the configured source and reports reduced reliability",
+          "filename pattern parsing works for the documented patterns and raises clearly on a non-matching name"
+        ]
+      }
+    ]
+  },
+
+  "exit_criteria": [
+    "The correction on/off comparison test on the adversarial scenario passes in both directions",
+    "No test anywhere in the suite depends on the real current time",
+    "Rational fps arithmetic is exact to within 1 ms over 100,000 frames",
+    "DST ambiguity and non-existence both raise rather than guessing",
+    "Temporal integrity caveats are attached to every trajectory and visible downstream"
+  ],
+
+  "deliverables": [
+    "src/multicam_tracker/timesync/{__init__,sources,derivation,offsets,estimation,drift,integrity,timezones,watermark}.py",
+    "scripts/estimate_camera_offsets.py",
+    "tests/unit/timesync/ (one module per source module)",
+    "tests/integration/timesync/test_drift_correction_end_to_end.py",
+    "tests/integration/timesync/test_recompute_offsets.py",
+    "tests/fixtures/media/ (small sample files with varied metadata)",
+    "docs/TIME_SYNCHRONIZATION.md documenting reliability tiers and operator procedures"
+  ]
+}

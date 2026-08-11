@@ -1,0 +1,233 @@
+{
+  "stage": 8,
+  "stage_id": "path_reconstruction",
+  "title": "Trajectory Assembly and Path Reconstruction Engine",
+  "inherits": "00_GLOBAL_CONTRACT.json",
+  "depends_on": [1, 2, 3, 4, 5, 6, 7],
+  "estimated_complexity": "high",
+
+  "objective": "Convert an unordered set of scored match candidates into the single most plausible ordered trajectory — with per-hop confidence, detected coverage gaps, and explicit handling of the ambiguous cases where more than one path is defensible.",
+
+  "context_for_agent": "This is the stage that answers the user's actual question: 'where did it go?'. Matching produces a cloud of possible sightings; this produces the route. The central difficulty is that greedy chronological chaining is wrong whenever a false-positive match sits in the middle of the timeline — one bad sighting can teleport the trajectory across the city. Use global scoring over the whole path, not local greedy decisions.",
+
+  "tasks": [
+    {
+      "id": "8.1",
+      "name": "Candidate preparation",
+      "detail": "Implement prepare_candidates(match_candidates, config) which filters out rejected candidates, optionally includes or excludes pending_review candidates depending on a 'confirmed_only' mode flag, sorts by timestamp, and deduplicates near-simultaneous sightings on the same camera using the min_redetection_gap_sec rule from stage 4 (keeping the highest-confidence representative of each pass)."
+    },
+    {
+      "id": "8.2",
+      "name": "Trajectory graph construction",
+      "detail": "Build a directed acyclic graph over the time-ordered candidates: a node per candidate, an edge from A to B when B is strictly later than A and the transition is either topology-plausible or plausible via multi-hop reachability. Edge weight combines the endpoint match confidences and topology.plausibility_score. Explicitly permit 'skip' edges spanning uncovered gaps, penalized by a configurable gap cost, so a target that passes through an unmonitored area still produces a connected trajectory."
+    },
+    {
+      "id": "8.3",
+      "name": "Optimal path selection",
+      "detail": "Find the maximum-score path through the DAG using dynamic programming over topologically-ordered nodes (O(V+E), exact — no heuristic search needed given the DAG structure). The objective is configurable: default is the sum of edge weights with a per-node inclusion bonus, so the algorithm prefers longer well-supported paths over short high-confidence fragments, but does not chain in weak nodes just to extend length. Document the objective function explicitly in code and in docs/."
+    },
+    {
+      "id": "8.4",
+      "name": "False-positive rejection",
+      "detail": "The path search must be able to skip a candidate entirely rather than being forced to include every match. Verify by construction and by test that a single high-scoring false positive at an implausible location is excluded from the optimal path when including it would require two implausible hops. This is the primary robustness property of the whole engine — test it directly with a constructed adversarial case."
+    },
+    {
+      "id": "8.5",
+      "name": "Alternative path enumeration",
+      "detail": "Implement k_best_paths(graph, k) returning the top-k scoring distinct paths, plus an ambiguity metric (score margin between best and second-best, normalized). When the margin falls below a configured threshold, mark the trajectory ambiguous and surface the alternatives to the user rather than presenting one path as definitive. Presenting a coin-flip as a certainty is the failure mode to avoid here."
+    },
+    {
+      "id": "8.6",
+      "name": "Gap detection and annotation",
+      "detail": "Detect and annotate: (a) coverage gaps — consecutive sightings with no direct topology link, annotated with the hop count and elapsed time; (b) temporal gaps — elapsed time far exceeding the expected max, suggesting the vehicle stopped or left the network; (c) camera outages overlapping the trajectory window, cross-referenced against per-camera sighting activity so an outage is distinguished from a genuine absence. Emit CoverageGap objects with human-readable reasons from topology.describe_gap."
+    },
+    {
+      "id": "8.7",
+      "name": "Confidence aggregation",
+      "detail": "Compute overall_confidence from the per-hop confidences using a configurable aggregation (default: geometric mean, which appropriately penalizes any single weak link rather than letting strong links average it away). Guarantee overall_confidence never exceeds the minimum hop confidence by more than a documented amount, and never exceeds 1.0. A chain is not stronger than its weakest link."
+    },
+    {
+      "id": "8.8",
+      "name": "Incremental / live extension",
+      "detail": "Implement extend_trajectory(existing_trajectory, new_candidates) for the live case, appending new sightings without recomputing from scratch. Handle the hard case where a newly arrived sighting is chronologically earlier than the current tail (out-of-order stream delivery): the affected suffix must be recomputed rather than blindly appended. Include a configurable reorder buffer window."
+    },
+    {
+      "id": "8.9",
+      "name": "Direction and movement inference",
+      "detail": "Derive per-hop bearing from camera coordinates, estimated speed from distance over elapsed time, and flag physically implausible speeds. Aggregate into trajectory-level statistics: total distance, average speed, dominant direction of travel, and any detected reversals (the target doubling back)."
+    },
+    {
+      "id": "8.10",
+      "name": "Explainability output",
+      "detail": "Every trajectory carries a machine-readable explanation: why each sighting was included, why the highest-scoring excluded candidates were excluded, and which constraint (topology, threshold, margin rule) drove each decision. This is required for the human review UI in stage 16 and for the audit trail — a trajectory a human cannot interrogate is not usable evidence."
+    },
+    {
+      "id": "8.11",
+      "name": "Evaluation harness",
+      "detail": "Implement trajectory-level metrics against stage 5 ground truth: exact path accuracy, per-sighting precision/recall within the reconstructed path, hop-level accuracy, gap detection accuracy, and a 'teleport rate' (fraction of trajectories containing a physically impossible hop — target zero). Provide scripts/evaluate_pathing.py running across all committed scenarios."
+    }
+  ],
+
+  "tests_substage": {
+    "id": "8.T",
+    "description": "Test the algorithm on constructed graphs where the correct answer is provable by hand before testing on generated data. Adversarial cases are mandatory, not optional.",
+    "unit_tests": [
+      {
+        "target": "candidate preparation",
+        "cases": [
+          "rejected candidates are always excluded",
+          "pending_review candidates are included in permissive mode and excluded in confirmed_only mode",
+          "near-simultaneous same-camera sightings collapse to one, retaining the highest-confidence record",
+          "sightings on the same camera beyond the redetection gap are both retained",
+          "output is strictly time-ordered",
+          "empty input returns an empty list without raising"
+        ]
+      },
+      {
+        "target": "graph construction",
+        "cases": [
+          "edges only ever point forward in time",
+          "an implausible direct transition produces no direct edge",
+          "an implausible direct transition that is plausible via two hops produces a penalized skip edge",
+          "the constructed graph is acyclic — verified programmatically",
+          "edge weights increase with endpoint confidence and with topology plausibility",
+          "single-candidate input produces a one-node zero-edge graph"
+        ]
+      },
+      {
+        "target": "optimal path selection",
+        "cases": [
+          "on a hand-constructed graph with a known optimum, the returned path is exactly the expected one",
+          "a linear chain of plausible high-confidence sightings returns the full chain",
+          "a single isolated candidate returns a one-sighting trajectory",
+          "empty candidate set returns an empty trajectory or raises per the documented convention",
+          "the algorithm is deterministic — identical input yields identical output across repeated runs",
+          "ties are broken by a documented deterministic rule, not by dict ordering"
+        ]
+      },
+      {
+        "target": "false-positive rejection (critical)",
+        "cases": [
+          "a high-confidence false positive at a geographically impossible location is EXCLUDED from the optimal path",
+          "the same false positive at a plausible location IS included",
+          "two consecutive false positives forming their own plausible sub-path are not preferred over the longer genuine path",
+          "a false positive at the very start of the timeline is excluded (boundary case — no preceding node to constrain it)",
+          "a false positive at the very end of the timeline is excluded (boundary case)",
+          "a false positive in the exact middle of an otherwise perfect chain is excluded"
+        ]
+      },
+      {
+        "target": "k-best paths and ambiguity",
+        "cases": [
+          "k_best returns exactly k distinct paths when k distinct paths exist",
+          "returns fewer than k without raising when fewer exist",
+          "paths are ordered by descending score",
+          "two genuinely equal-scoring paths produce an ambiguity margin of 0 and the ambiguous flag set",
+          "a clear winner produces a large margin and no ambiguous flag",
+          "the ambiguity threshold boundary is tested exactly"
+        ]
+      },
+      {
+        "target": "gap detection",
+        "cases": [
+          "consecutive sightings with no topology link produce a coverage gap with the correct reason",
+          "elapsed time far exceeding the plausible max produces a temporal gap",
+          "a camera outage overlapping the window is detected and distinguished from a genuine absence",
+          "a fully covered trajectory reports zero gaps",
+          "gap reasons are human-readable and distinct per gap type"
+        ]
+      },
+      {
+        "target": "confidence aggregation",
+        "cases": [
+          "a path of all-1.0 hops aggregates to 1.0",
+          "a path containing one 0.1 hop aggregates near or below 0.1 — the weak link dominates",
+          "aggregation never exceeds 1.0 or falls below 0.0",
+          "adding a weak hop to a strong path always lowers overall confidence (monotonicity)",
+          "single-sighting trajectory confidence equals that sighting's match confidence"
+        ]
+      },
+      {
+        "target": "incremental extension",
+        "cases": [
+          "appending a later plausible sighting extends the trajectory correctly",
+          "appending an implausible sighting leaves the trajectory unchanged and records the rejection",
+          "an out-of-order sighting earlier than the tail triggers suffix recomputation",
+          "the result of incremental extension equals full recomputation on the same total candidate set (equivalence property — assert on many random orderings)",
+          "sightings arriving outside the reorder buffer window are handled per the documented policy"
+        ]
+      },
+      {
+        "target": "movement inference",
+        "cases": [
+          "bearing between two known coordinate pairs matches the expected compass bearing",
+          "speed calculation matches distance over elapsed time",
+          "implausible speed is flagged",
+          "a doubling-back route is detected as a reversal",
+          "zero elapsed time does not produce a divide-by-zero"
+        ]
+      },
+      {
+        "target": "explainability",
+        "cases": [
+          "every included sighting has a recorded inclusion reason",
+          "the top excluded candidates each have a recorded exclusion reason naming the governing constraint",
+          "the explanation serializes to JSON and reloads intact"
+        ]
+      }
+    ],
+    "property_based_tests": [
+      "For randomly generated candidate sets, the returned path is always strictly time-ordered.",
+      "For randomly generated candidate sets, every hop in the returned path either satisfies topology plausibility or is explicitly marked as a penalized gap hop — never silently implausible.",
+      "Incremental extension and full recomputation agree for arbitrary arrival orderings of the same candidates."
+    ],
+    "integration_tests": [
+      {
+        "target": "evaluation on synthetic scenarios",
+        "cases": [
+          "on 'clean', exact path accuracy is 1.0",
+          "on 'realistic', path accuracy meets its documented target",
+          "on 'degraded', teleport rate is exactly 0 even though path accuracy is lower — never produce a physically impossible route",
+          "on 'hard_negatives', decoy sightings do not appear in the reconstructed target path",
+          "on 'sparse_coverage', gaps are correctly detected and the trajectory still spans the full route via skip edges",
+          "on 'adversarial', the cloned-plate conflict produces an ambiguous flag with alternatives rather than one confident wrong path",
+          "on 'adversarial', clock drift on one camera does not reorder the trajectory incorrectly once stage 9's correction is applied (mark as pending until stage 9, then enable)"
+        ]
+      },
+      {
+        "target": "end-to-end with real repositories",
+        "cases": [
+          "full flow from a Postgres-loaded synthetic dataset through matching to a saved Trajectory row",
+          "the saved trajectory reads back equal to the computed one",
+          "trajectory save is idempotent for the same target and inputs"
+        ]
+      },
+      {
+        "target": "regression and performance",
+        "cases": [
+          "all metrics asserted against committed baselines with tolerance",
+          "reconstruction over 10,000 candidates completes within a documented budget (marked 'slow')",
+          "runtime scales roughly linearly in edge count, verified across three dataset sizes"
+        ]
+      }
+    ]
+  },
+
+  "exit_criteria": [
+    "Teleport rate is zero on every committed scenario",
+    "The mid-chain false-positive rejection test passes — this is the stage's defining property",
+    "Ambiguous cases surface alternatives instead of a single confident answer",
+    "Incremental extension provably agrees with full recomputation",
+    "Every trajectory carries a complete, serializable explanation of inclusions and exclusions"
+  ],
+
+  "deliverables": [
+    "src/multicam_tracker/pathing/{__init__,preparation,graph,optimal_path,kbest,gaps,confidence,incremental,movement,explanation,evaluation}.py",
+    "scripts/evaluate_pathing.py",
+    "tests/unit/pathing/ (one module per source module)",
+    "tests/unit/pathing/test_adversarial_paths.py (the constructed false-positive cases)",
+    "tests/integration/pathing/test_pathing_evaluation.py",
+    "tests/integration/pathing/baselines/pathing_metrics_baseline.json",
+    "docs/PATH_RECONSTRUCTION.md documenting the objective function and scoring model"
+  ]
+}

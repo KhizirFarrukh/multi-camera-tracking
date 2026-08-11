@@ -1,0 +1,182 @@
+{
+  "stage": 5,
+  "stage_id": "synthetic_data_generator",
+  "title": "Synthetic Sighting Generator and Ground-Truth Scenario Framework",
+  "inherits": "00_GLOBAL_CONTRACT.json",
+  "depends_on": [1, 2, 3, 4],
+  "estimated_complexity": "medium",
+
+  "objective": "Generate realistic synthetic sighting data with known ground truth, so that the matching and path-reconstruction engines (stages 6-8) can be developed and measured precisely before any real video or CV model is involved.",
+
+  "context_for_agent": "This is the highest-leverage stage in the project. With a ground-truth generator you can measure precision and recall of the matching engine directly, tune thresholds empirically, and catch regressions — none of which is possible if you go straight to real footage where you never truly know the right answer. Model the failure modes of real ALPR faithfully: that realism is the entire point.",
+
+  "tasks": [
+    {
+      "id": "5.1",
+      "name": "Scenario specification format",
+      "detail": "Define a Scenario model describing a synthetic dataset: topology reference, time span, list of VehicleSpec entries (plate, object_class, a route as an ordered list of camera_ids, departure time, speed profile), a background traffic specification (volume of decoy vehicles), and a noise profile reference. Scenarios are declarative and serializable to YAML so they can be committed and reused as regression fixtures."
+    },
+    {
+      "id": "5.2",
+      "name": "Route simulation",
+      "detail": "Given a route through the topology, generate sightings with timestamps derived from the actual CameraLink travel-time windows plus configurable jitter. Sightings must be topology-consistent by construction (this produces the 'correct answer'). Support routes that revisit a camera, routes that skip covered cameras (simulating a missed detection), and routes that leave and re-enter the covered area."
+    },
+    {
+      "id": "5.3",
+      "name": "Plate OCR noise model",
+      "detail": "Implement a configurable noise model that corrupts plate readings realistically: (a) ambiguity substitutions weighted by real-world confusion frequency (O/0, I/1/L, S/5, B/8, Z/2, G/6); (b) character dropout (plate partially occluded, producing a shorter string); (c) complete read failure producing plate_text=None with an embedding still present; (d) spurious extra characters from frame borders or bumper stickers; (e) confidence values correlated with corruption severity so that low-quality reads carry low confidence, as real OCR does. Each corruption event is recorded in ground truth so tests can assert on specific failure modes."
+    },
+    {
+      "id": "5.4",
+      "name": "Embedding simulation",
+      "detail": "Generate synthetic re-id embeddings with controllable intra-vehicle and inter-vehicle similarity: each vehicle has a base vector; each sighting's embedding is the base plus Gaussian noise scaled by a configurable intra_class_sigma, then L2-normalized. Decoy vehicles are drawn to produce a configurable inter_class_similarity distribution, including a 'hard negatives' option generating decoys deliberately close to the target (simulating same make/model/color vehicles). Without hard negatives the matching engine will look far better than it is."
+    },
+    {
+      "id": "5.5",
+      "name": "Background traffic generation",
+      "detail": "Generate decoy vehicles traversing plausible topology routes at a configurable volume, so the target is a needle in a realistic haystack. Decoy plates are drawn from a generator that can produce plates within a configurable edit distance of the target plate, to stress fuzzy matching directly."
+    },
+    {
+      "id": "5.6",
+      "name": "Adversarial and edge-case injection",
+      "detail": "Support deliberate injection of: clock drift on a specific camera (sightings offset by N seconds, testing stage 09's correction); a camera outage window with zero sightings; duplicate sightings of the same pass (testing dedup); out-of-order arrival of records; a decoy vehicle with a plate identical to the target's (plate cloning); timestamps landing exactly on plausibility window boundaries."
+    },
+    {
+      "id": "5.7",
+      "name": "Ground-truth artifact",
+      "detail": "Every generated dataset emits a GroundTruth object and file containing: the true sighting_id -> vehicle_id assignment for every sighting, the true ordered trajectory per vehicle, the true plate for every vehicle, and a log of every corruption applied. Matching and pathing evaluations in later stages score against this file."
+    },
+    {
+      "id": "5.8",
+      "name": "Determinism",
+      "detail": "Generation is fully seeded. The same scenario file plus the same seed must produce byte-identical output. This is non-negotiable — it is what makes stage 6-8 tests reproducible. Provide the seed in the emitted ground truth."
+    },
+    {
+      "id": "5.9",
+      "name": "Committed regression scenarios",
+      "detail": "Author and commit at least six scenarios as fixtures: (1) 'clean' — perfect reads, no decoys; (2) 'realistic' — moderate noise, moderate traffic; (3) 'degraded' — heavy OCR noise, many failed reads, embeddings must carry the load; (4) 'hard_negatives' — decoys visually near-identical to the target; (5) 'sparse_coverage' — target passes through gaps requiring multi-hop reasoning; (6) 'adversarial' — clock drift, outage, duplicates, and a cloned plate combined."
+    },
+    {
+      "id": "5.10",
+      "name": "CLI and loader",
+      "detail": "Provide scripts/generate_dataset.py taking a scenario file, seed, and output target (JSON file or direct database load), plus a loader that seeds a repository (real or in-memory) from a generated dataset for use in tests and demos."
+    }
+  ],
+
+  "tests_substage": {
+    "id": "5.T",
+    "description": "A buggy generator produces confidently wrong evaluations downstream, so the generator itself must be verified against its own declared ground truth.",
+    "unit_tests": [
+      {
+        "target": "determinism",
+        "cases": [
+          "same scenario and seed produce identical output across two runs (compare full serialized output)",
+          "different seeds produce different output",
+          "seed is recorded in the ground-truth artifact and matches the requested seed"
+        ]
+      },
+      {
+        "target": "route simulation",
+        "cases": [
+          "generated sightings for a route appear on exactly the specified cameras in the specified order",
+          "every consecutive pair of generated sightings satisfies is_transition_plausible against the topology (self-consistency check)",
+          "jitter stays within the configured bounds",
+          "a route revisiting a camera produces the correct number of sightings on it",
+          "a route with a skipped camera omits that camera and the remaining hops are still multi-hop plausible",
+          "timestamps are strictly increasing along a route"
+        ]
+      },
+      {
+        "target": "plate noise model",
+        "cases": [
+          "with corruption probability 0, every generated plate exactly equals the vehicle's true plate",
+          "with corruption probability 1, no generated plate equals the true plate",
+          "substitution corruptions only ever use characters from the configured confusion set",
+          "dropout produces a strictly shorter string",
+          "complete read failure yields plate_text None while embedding remains present",
+          "confidence is negatively correlated with corruption severity across a large sample (assert on the correlation coefficient)",
+          "every corruption applied is recorded in the ground-truth corruption log",
+          "edit distance between corrupted and true plate never exceeds the configured maximum"
+        ]
+      },
+      {
+        "target": "embedding simulation",
+        "cases": [
+          "all generated embeddings are L2-normalized within tolerance",
+          "all embeddings have the configured dimension",
+          "mean intra-vehicle cosine similarity exceeds mean inter-vehicle similarity by a clear margin in the default config",
+          "raising intra_class_sigma measurably lowers intra-vehicle similarity",
+          "hard-negative decoys produce inter-class similarities in the configured elevated range",
+          "with hard negatives enabled, at least one decoy exceeds the naive embedding threshold — i.e. the scenario is genuinely hard"
+        ]
+      },
+      {
+        "target": "background traffic",
+        "cases": [
+          "requested decoy volume is produced within tolerance",
+          "decoy routes are themselves topology-plausible",
+          "near-miss plate generation produces plates at exactly the requested edit distances from the target",
+          "no decoy accidentally shares the target's exact plate unless the cloning option is enabled"
+        ]
+      },
+      {
+        "target": "adversarial injection",
+        "cases": [
+          "clock drift injection offsets exactly the specified camera's raw timestamps by the specified amount and records it in ground truth",
+          "outage window contains zero sightings for the affected camera",
+          "duplicate injection produces sightings with distinct ids but identical vehicle, camera, and near-identical timestamps",
+          "plate cloning produces two distinct vehicle_ids sharing one plate string in ground truth",
+          "boundary-timestamp injection produces at least one hop with elapsed exactly equal to min_travel_time and one exactly equal to max_travel_time"
+        ]
+      },
+      {
+        "target": "ground truth integrity",
+        "cases": [
+          "every generated sighting_id appears exactly once in the ground-truth assignment map",
+          "the ground-truth trajectory for each vehicle is time-ordered and contains exactly that vehicle's sightings",
+          "the number of sightings in ground truth equals the number generated (no orphans, no phantoms)",
+          "ground truth serializes to JSON and reloads to an equal object"
+        ]
+      }
+    ],
+    "integration_tests": [
+      {
+        "target": "database loading",
+        "cases": [
+          "a generated dataset loads into a real Postgres repository without constraint violations",
+          "all referenced camera_ids exist after topology sync (no FK failures)",
+          "loading the same dataset twice with conflict-ignore produces no duplicates",
+          "loaded sightings read back from the database equal the generated ones",
+          "embeddings survive the database round trip and remain L2-normalized within float32 tolerance"
+        ]
+      },
+      {
+        "target": "committed regression scenarios",
+        "cases": [
+          "all six committed scenarios generate successfully without error",
+          "each scenario's generated data is self-consistent with its ground truth",
+          "each scenario's characteristics match its intent — asserted quantitatively (e.g. the 'degraded' scenario has a plate read-failure rate above a stated threshold; the 'clean' scenario has zero corruptions)",
+          "generation of the largest scenario completes within a documented time budget (marked 'slow')"
+        ]
+      }
+    ]
+  },
+
+  "exit_criteria": [
+    "Generation is byte-for-byte deterministic given a scenario and seed",
+    "All six regression scenarios are committed and load cleanly into both in-memory and Postgres repositories",
+    "Every generated dataset is self-consistent with its emitted ground truth, verified by test",
+    "The noise model reproduces all five named OCR failure modes and records each occurrence",
+    "Hard-negative generation is demonstrably hard, not decorative"
+  ],
+
+  "deliverables": [
+    "src/multicam_tracker/synth/{__init__,scenario,routes,plate_noise,embeddings,traffic,adversarial,ground_truth,generator}.py",
+    "scripts/generate_dataset.py",
+    "tests/fixtures/scenarios/{clean,realistic,degraded,hard_negatives,sparse_coverage,adversarial}.yaml",
+    "tests/unit/synth/ (one module per source module)",
+    "tests/integration/synth/test_dataset_loading.py",
+    "tests/integration/synth/test_regression_scenarios.py",
+    "docs/SYNTHETIC_DATA.md documenting the scenario format and noise model parameters"
+  ]
+}

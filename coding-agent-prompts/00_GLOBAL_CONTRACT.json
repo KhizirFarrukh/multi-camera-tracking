@@ -1,0 +1,203 @@
+{
+  "document_type": "global_contract",
+  "version": "1.0",
+  "project_name": "multicam-tracker",
+  "purpose": "Shared conventions, constraints, and definitions that EVERY stage prompt inherits. The coding agent MUST read this file before executing any stage file, and MUST re-read it if it loses context.",
+
+  "project_summary": "A multi-camera object tracking and path reconstruction system. Given a target identifier (primarily a vehicle license plate, with visual re-identification as fallback), the system ingests video from multiple cameras (recorded or live), detects vehicles, identifies them, stores 'sightings', and reconstructs the object's movement path across cameras using synchronized timestamps and a camera topology map. Output is a timeline plus a map visualization.",
+
+  "execution_rules": {
+    "stage_order": "Stages MUST be executed in ascending numeric order. Do not begin stage N+1 until stage N's exit_criteria are fully met and its tests pass.",
+    "no_scope_creep": "Implement exactly what the stage specifies. If a stage references a component built in a later stage, stub it behind the interface defined here and add a TODO referencing the future stage number.",
+    "no_placeholder_logic": "Do not write functions that silently return fake data unless the stage explicitly asks for a stub. Stubs must raise NotImplementedError with the stage number that will implement them.",
+    "tests_are_mandatory": "Every stage has a 'tests' substage. The stage is NOT complete until unit tests AND integration tests described in that substage are written and passing.",
+    "commit_convention": "One git commit per stage minimum, message format: 'stage-NN: <short description>'.",
+    "report_back": "At the end of each stage, output a completion report listing: files created/modified, tests written, test results summary, deviations from spec (with justification), and any assumptions made."
+  },
+
+  "tech_stack": {
+    "language": "Python 3.11+",
+    "package_manager": "uv (fallback: pip with requirements.txt)",
+    "web_framework": "FastAPI",
+    "database": "PostgreSQL 16 with pgvector extension",
+    "orm": "SQLAlchemy 2.x (declarative) + Alembic for migrations",
+    "validation": "Pydantic v2",
+    "cv_stack": "OpenCV, Ultralytics YOLO, PaddleOCR (OCR), PyTorch (re-id embeddings)",
+    "testing": "pytest, pytest-asyncio, pytest-cov, testcontainers (for Postgres integration tests), hypothesis (property-based tests where noted)",
+    "linting": "ruff (lint + format), mypy (strict on src/)",
+    "frontend": "Plain HTML/JS + Leaflet.js for map rendering. No heavy SPA framework.",
+    "containerization": "Docker + docker-compose for Postgres and app services"
+  },
+
+  "repository_layout": {
+    "src/multicam_tracker/": "main package",
+    "src/multicam_tracker/models/": "Pydantic domain models",
+    "src/multicam_tracker/db/": "SQLAlchemy models, session management, repositories, migrations",
+    "src/multicam_tracker/topology/": "camera topology loading and travel-time constraint logic",
+    "src/multicam_tracker/matching/": "plate normalization, fuzzy matching, embedding similarity, candidate scoring",
+    "src/multicam_tracker/pathing/": "path reconstruction and trajectory assembly",
+    "src/multicam_tracker/ingest/": "video source abstraction, frame sampling, live stream handling",
+    "src/multicam_tracker/vision/": "detection, plate OCR, re-id embedding extraction",
+    "src/multicam_tracker/pipeline/": "orchestration wiring vision -> sightings -> storage",
+    "src/multicam_tracker/api/": "FastAPI routes and schemas",
+    "src/multicam_tracker/review/": "human-in-the-loop review workflow",
+    "src/multicam_tracker/observability/": "logging, metrics, tracing helpers",
+    "web/": "static frontend assets (map + timeline UI)",
+    "tests/unit/": "unit tests mirroring src package structure",
+    "tests/integration/": "integration tests (DB, pipeline, API)",
+    "tests/fixtures/": "shared fixtures, synthetic data generators, sample media",
+    "config/": "YAML/JSON config files including camera topology",
+    "scripts/": "developer CLI scripts",
+    "docs/": "architecture and operational documentation"
+  },
+
+  "canonical_data_contracts": {
+    "note": "These schemas are the single source of truth. Stages that touch them must not redefine fields with different names or types.",
+    "Sighting": {
+      "sighting_id": "UUID (str), primary key",
+      "camera_id": "str, FK to Camera.camera_id",
+      "timestamp_utc": "datetime, timezone-aware UTC, millisecond precision. This is the CORRECTED timestamp after clock-offset adjustment.",
+      "raw_timestamp": "datetime, timezone-aware, as reported by the source before offset correction",
+      "clock_offset_applied_ms": "int, offset added to raw_timestamp to produce timestamp_utc",
+      "object_class": "str enum: 'car' | 'truck' | 'bus' | 'motorcycle' | 'unknown'",
+      "detection_confidence": "float 0.0-1.0, from the object detector",
+      "bbox": "list[int] of length 4, [x1, y1, x2, y2] in source-frame pixel coordinates",
+      "frame_index": "int, index of the frame within its source",
+      "plate_text_raw": "str | None, OCR output before normalization",
+      "plate_text_normalized": "str | None, uppercase, alphanumeric only, ambiguity-folded (see plate_normalization)",
+      "plate_confidence": "float 0.0-1.0 | None",
+      "embedding": "list[float] of fixed dimension (default 512) | None, L2-normalized re-id vector",
+      "embedding_model_version": "str | None, identifier of the model that produced the embedding",
+      "thumbnail_path": "str | None, relative path to cropped object image",
+      "source_id": "str, identifies the video file or stream that produced this sighting",
+      "created_at": "datetime UTC, row insertion time"
+    },
+    "Camera": {
+      "camera_id": "str, primary key, stable human-readable id e.g. 'cam_03'",
+      "name": "str, human label e.g. 'Main St & 5th Ave'",
+      "lat": "float, WGS84 latitude",
+      "lon": "float, WGS84 longitude",
+      "heading_degrees": "float | None, 0-360, direction camera faces",
+      "clock_offset_ms": "int, default 0, offset to add to raw timestamps from this camera",
+      "enabled": "bool, default true",
+      "notes": "str | None"
+    },
+    "CameraLink": {
+      "from_camera_id": "str",
+      "to_camera_id": "str",
+      "min_travel_time_sec": "float, fastest plausible transit time",
+      "max_travel_time_sec": "float, slowest plausible transit time before the link is considered implausible",
+      "distance_meters": "float | None",
+      "bidirectional": "bool, default true"
+    },
+    "Target": {
+      "target_id": "UUID (str)",
+      "label": "str, human name for the target e.g. 'Stolen Blue Sedan'",
+      "plate_query": "str | None, normalized plate being searched for",
+      "reference_embeddings": "list[list[float]] | None, known-good embeddings for this target",
+      "created_at": "datetime UTC",
+      "active": "bool"
+    },
+    "MatchCandidate": {
+      "sighting_id": "str",
+      "target_id": "str",
+      "match_method": "str enum: 'plate_exact' | 'plate_fuzzy' | 'embedding' | 'manual'",
+      "match_score": "float 0.0-1.0, method-specific raw similarity",
+      "plate_edit_distance": "int | None",
+      "embedding_similarity": "float | None, cosine similarity",
+      "review_status": "str enum: 'auto_accepted' | 'pending_review' | 'confirmed' | 'rejected'"
+    },
+    "TrajectoryHop": {
+      "from_sighting_id": "str",
+      "to_sighting_id": "str",
+      "from_camera_id": "str",
+      "to_camera_id": "str",
+      "elapsed_sec": "float",
+      "topology_plausible": "bool, whether elapsed_sec fell within the CameraLink window",
+      "hop_confidence": "float 0.0-1.0"
+    },
+    "Trajectory": {
+      "trajectory_id": "UUID (str)",
+      "target_id": "str",
+      "sightings": "ordered list[Sighting], sorted ascending by timestamp_utc",
+      "hops": "ordered list[TrajectoryHop]",
+      "overall_confidence": "float 0.0-1.0",
+      "start_time_utc": "datetime",
+      "end_time_utc": "datetime",
+      "gaps": "list of detected coverage gaps (see stage 08)"
+    }
+  },
+
+  "plate_normalization": {
+    "rules": [
+      "Uppercase all characters",
+      "Strip all non-alphanumeric characters including spaces, hyphens, dots",
+      "Strip common regional prefixes/suffixes only if configured to do so (configurable, default off)",
+      "Ambiguity folding for FUZZY COMPARISON ONLY (never mutate the stored normalized value): O<->0, I<->1, L<->1, S<->5, B<->8, Z<->2, G<->6, Q<->0",
+      "Store both plate_text_raw and plate_text_normalized; never discard the raw value"
+    ],
+    "comparison_note": "Fuzzy matching computes edit distance on the ambiguity-folded form of both strings. A distance of 0 on folded forms but >0 on normalized forms is still classified 'plate_fuzzy', not 'plate_exact'."
+  },
+
+  "confidence_model": {
+    "principle": "Every match and every trajectory hop carries an explicit confidence. Nothing is silently promoted to certainty.",
+    "match_confidence_inputs": ["plate_confidence from OCR", "match method weight", "plate edit distance penalty", "embedding cosine similarity when used"],
+    "hop_confidence_inputs": ["confidence of both endpoint matches", "temporal plausibility against CameraLink window", "whether a topology link exists at all"],
+    "thresholds_config": "All thresholds live in config/thresholds.yaml. No magic numbers hardcoded in logic.",
+    "default_thresholds": {
+      "plate_auto_accept_min_confidence": 0.85,
+      "plate_fuzzy_max_edit_distance": 2,
+      "embedding_auto_accept_min_similarity": 0.92,
+      "embedding_review_min_similarity": 0.75,
+      "hop_implausible_penalty": 0.5
+    }
+  },
+
+  "testing_standards": {
+    "coverage_target": "Minimum 85% line coverage on src/multicam_tracker/, enforced in CI.",
+    "unit_tests": "Fast, no network, no database, no model weights. Mock all I/O. Located in tests/unit/ mirroring source structure.",
+    "integration_tests": "May use a real Postgres via testcontainers, real sample media files, and real (small) model weights where the stage requires it. Located in tests/integration/.",
+    "test_naming": "test_<unit_under_test>__<condition>__<expected_outcome>",
+    "required_case_classes": [
+      "happy path",
+      "boundary values (empty, single element, max size)",
+      "invalid/malformed input",
+      "error propagation and exception types",
+      "idempotency where the operation claims to be idempotent",
+      "timezone correctness for anything touching timestamps"
+    ],
+    "no_flaky_tests": "Tests must be deterministic. Seed all randomness. Freeze time with freezegun or dependency-injected clocks. No sleeps for synchronization.",
+    "fixtures": "Reusable fixtures go in tests/fixtures/ and are shared across stages. Do not duplicate fixture logic."
+  },
+
+  "cross_cutting_requirements": {
+    "timezones": "All internal datetimes are timezone-aware UTC. Naive datetimes are rejected at validation boundaries with a clear error.",
+    "logging": "Structured logging (JSON) via the project logger. No print statements in src/.",
+    "config": "All configuration via Pydantic Settings reading from environment variables and config files. No hardcoded paths, hosts, credentials, or thresholds.",
+    "secrets": "Never commit credentials. Use .env with a committed .env.example.",
+    "typing": "Full type annotations. mypy strict must pass on src/.",
+    "docstrings": "Every public function/class has a docstring stating purpose, args, returns, and raised exceptions.",
+    "errors": "Define a project exception hierarchy rooted at MulticamTrackerError. Never raise bare Exception."
+  },
+
+  "operational_and_ethical_constraints": {
+    "note": "This system processes surveillance footage and vehicle identifiers. These requirements are functional requirements, not optional extras, and stages that touch data storage or output must implement them.",
+    "requirements": [
+      "Audit logging: every target search, match confirmation, and match rejection is written to an append-only audit log with actor, timestamp, and query parameters (stage 18).",
+      "Data retention: sightings and thumbnails must have a configurable TTL with an automated purge job (stage 03 schema support, stage 18 job).",
+      "Confidence surfacing: the UI and API must never present a low-confidence match as a confirmed one. Confidence is always displayed alongside results.",
+      "Human review gate: matches below the auto-accept threshold require explicit human confirmation before being included in a confirmed trajectory (stage 16).",
+      "Access control: API endpoints require authentication; write and confirm operations require an authenticated actor identity for the audit trail (stage 14)."
+    ]
+  },
+
+  "glossary": {
+    "sighting": "A single detection of an object by one camera at one timestamp.",
+    "target": "The object being searched for, defined by a plate query and/or reference embeddings.",
+    "match": "A link asserting that a given sighting is the target.",
+    "hop": "A transition between two consecutive confirmed sightings on different cameras.",
+    "trajectory": "The ordered sequence of a target's sightings plus the hops between them.",
+    "topology": "The graph of cameras and plausible travel times between them.",
+    "re-id": "Re-identification: matching an object by learned visual appearance embedding rather than by a unique text identifier."
+  }
+}

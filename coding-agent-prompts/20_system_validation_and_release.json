@@ -1,0 +1,168 @@
+{
+  "stage": 20,
+  "stage_id": "system_validation_and_release",
+  "title": "System-Level Validation, Acceptance Testing, and Release Packaging",
+  "inherits": "00_GLOBAL_CONTRACT.json",
+  "depends_on": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+  "estimated_complexity": "medium-high",
+
+  "objective": "Validate the assembled system against the original goal end to end, measure and publish its real accuracy, verify it degrades safely under every anticipated failure, and package it for reproducible deployment.",
+
+  "context_for_agent": "Every prior stage tested its own component. This stage tests the claim: given multiple camera feeds and a plate, does the system correctly report where the vehicle went — and does it know when it does not know? The most valuable output is an honest measurement of accuracy and limits. A system whose real error rate is documented is far more useful than one assumed to be perfect.",
+
+  "tasks": [
+    {
+      "id": "20.1",
+      "name": "Acceptance test suite",
+      "detail": "Define acceptance tests stated in user terms, independent of implementation: given footage from N cameras and a target plate, the system returns the correct camera sequence with correct timestamps; given a target that never appears, it returns empty rather than a spurious match; given ambiguous evidence, it reports ambiguity rather than a confident answer; given a camera with drifted clocks, it flags the integrity problem; given a live feed, it alerts within the latency budget. Each traces explicitly to the original project objective."
+    },
+    {
+      "id": "20.2",
+      "name": "Reference evaluation dataset",
+      "detail": "Assemble a held-out evaluation dataset never used for tuning: real multi-camera footage where possible with hand-labeled ground-truth trajectories, supplemented by the synthetic scenarios. Document its composition, conditions covered, and known biases. Freeze it and version it, and prohibit tuning against it — an evaluation set used for tuning stops measuring anything."
+    },
+    {
+      "id": "20.3",
+      "name": "End-to-end accuracy measurement",
+      "detail": "Measure and publish, on the frozen dataset: sighting-level precision and recall, trajectory-level exact-path accuracy, camera-sequence accuracy allowing for missed intermediate cameras, timestamp accuracy, teleport rate (must be zero), false-positive rate at each operating point, and a precision-recall curve across the confidence range. Break results down by condition (illumination, angle, distance, plate legibility) so the limits are specific rather than aggregate. Report what the system does badly with the same prominence as what it does well."
+    },
+    {
+      "id": "20.4",
+      "name": "Failure mode validation",
+      "detail": "Systematically verify behavior under every anticipated failure: camera offline, camera clock drifted, plate unreadable, plate cloned, vehicle absent from footage, vehicle present but never detected, database unavailable, model weights missing, disk full, network partition during live processing, and malformed configuration. For each, confirm the system fails safely and legibly rather than producing a confident wrong answer. Confident wrong answers are the failure class that matters most here."
+    },
+    {
+      "id": "20.5",
+      "name": "Adversarial validation",
+      "detail": "Test deliberate defeat attempts: an obscured or partially covered plate, a plate cloned onto a similar vehicle, two visually near-identical vehicles on overlapping routes, a vehicle deliberately avoiding covered routes, and timestamp manipulation. Document which are detected, which are not, and what the system reports in each case. Publishing the known evasion modes is a necessary part of honest documentation of what the system can support."
+    },
+    {
+      "id": "20.6",
+      "name": "Performance and capacity characterization",
+      "detail": "Measure and document: maximum sustainable camera count per hardware configuration, throughput in hours-of-footage per hour of processing, live latency percentiles under varying load, database growth per camera-day, storage per camera-day including thumbnails, and query latency against datasets of 1M, 10M, and 100M sightings. Produce a sizing guide so an operator can plan a deployment from measured numbers rather than guesses."
+    },
+    {
+      "id": "20.7",
+      "name": "Deployment packaging",
+      "detail": "Produce a multi-stage Dockerfile (separate lightweight logic-only and full vision images), a docker-compose stack for single-node deployment, example Kubernetes manifests, database migration procedures for upgrades, a configuration reference documenting every setting with its default and effect, and a backup and restore procedure verified by an actual restore test — a backup never restored is not a backup."
+    },
+    {
+      "id": "20.8",
+      "name": "Installation validation",
+      "detail": "Implement a post-install self-test verifying every dependency: database reachable and migrated, model weights present and loadable, sample inference produces expected output, storage writable with sufficient space, and configuration valid. Runs as a single command and reports every problem in one pass. Include an end-to-end smoke test processing a bundled sample clip and verifying the expected trajectory."
+    },
+    {
+      "id": "20.9",
+      "name": "Documentation completeness",
+      "detail": "Verify and complete: README with a working quickstart tested against a clean environment, architecture documentation reflecting what was actually built rather than what was planned, per-stage design docs, API reference, operator runbooks, governance documentation with measured error rates, a troubleshooting guide, and an upgrade guide. Test the quickstart by following it verbatim on a clean machine — untested documentation is reliably wrong."
+    },
+    {
+      "id": "20.10",
+      "name": "Release checklist",
+      "detail": "Produce a release checklist covering: full test suite green including slow and model-requiring tests, accuracy metrics meeting documented targets, no regressions against committed baselines, security review of dependencies (vulnerability scan), configuration defaults appropriate for production (auth enabled, debug disabled, retention configured), backup verified by restore, runbooks current, and documented known limitations."
+    }
+  ],
+
+  "tests_substage": {
+    "id": "20.T",
+    "description": "The tests here are the system's own final examination. They must be runnable as a single command and produce a published report, so any future change can be evaluated against the same bar.",
+    "acceptance_tests": [
+      {
+        "target": "core user journeys",
+        "cases": [
+          "process footage from four cameras, search a known plate, and receive the correct camera sequence with timestamps accurate within tolerance",
+          "search a plate absent from the footage and receive an empty result with no spurious matches",
+          "search a plate where evidence supports two paths and receive an ambiguous result with both alternatives",
+          "process footage with an injected clock drift and receive the integrity caveat on the affected segments",
+          "run a live feed with an active watchlist target and receive an alert within the latency budget",
+          "review a pending match, confirm it, and observe the trajectory update",
+          "export a trajectory and verify the export preserves confidences and caveats",
+          "every acceptance test traces explicitly to a stated project objective"
+        ]
+      }
+    ],
+    "system_tests": [
+      {
+        "target": "accuracy on the frozen evaluation set",
+        "cases": [
+          "all published metrics are computed and asserted against documented targets",
+          "teleport rate is exactly zero",
+          "false-positive rate at the default operating point meets its target",
+          "per-condition breakdown is produced and the weakest conditions are identified explicitly",
+          "results are reproducible across runs with fixed seeds",
+          "the evaluation set is verified never to have been used for tuning — asserted by a documented provenance check"
+        ]
+      },
+      {
+        "target": "failure mode validation",
+        "cases": [
+          "each of the eleven enumerated failure modes is triggered and the system's response verified against the documented expected behavior",
+          "no failure mode produces a confident wrong trajectory — the single most important assertion in this suite",
+          "each failure produces a legible operator-facing message",
+          "the system recovers automatically where recovery is possible and reports clearly where it is not"
+        ]
+      },
+      {
+        "target": "adversarial validation",
+        "cases": [
+          "each evasion technique is attempted and the system's response documented",
+          "a cloned plate produces a conflict report rather than a merged trajectory",
+          "two near-identical vehicles produce an ambiguous result rather than a confident wrong assignment",
+          "an obscured plate produces no plate match and falls back to embedding evidence with appropriately reduced confidence",
+          "results are written into the documented known-limitations section"
+        ]
+      },
+      {
+        "target": "performance and capacity",
+        "cases": [
+          "camera capacity per hardware configuration is measured and documented",
+          "query latency is measured at 1M, 10M, and 100M sightings and remains within targets",
+          "storage growth per camera-day is measured",
+          "live latency percentiles under load meet the budget",
+          "marked 'slow'; run on release candidates rather than every commit"
+        ]
+      },
+      {
+        "target": "deployment validation",
+        "cases": [
+          "a clean deployment from the packaged artifacts succeeds on a fresh environment",
+          "the post-install self-test passes and correctly detects each simulated missing dependency",
+          "the bundled smoke test processes the sample clip and produces the expected trajectory",
+          "an upgrade from the prior schema version migrates without data loss",
+          "backup and restore is exercised and the restored system produces identical query results",
+          "the quickstart in the README is followed verbatim on a clean machine and works"
+        ]
+      },
+      {
+        "target": "full regression",
+        "cases": [
+          "every stage's test suite passes, including slow and model-requiring tests",
+          "every committed metric baseline is met or exceeded",
+          "coverage remains at or above the target across all packages",
+          "lint and type checks pass with no suppressions added since the prior release"
+        ]
+      }
+    ]
+  },
+
+  "exit_criteria": [
+    "Every acceptance test passes and traces to a stated project objective",
+    "Accuracy is measured on a frozen, never-tuned-against evaluation set and published with per-condition breakdowns",
+    "No failure mode produces a confident wrong trajectory",
+    "Known evasion techniques and limitations are documented",
+    "A clean deployment plus self-test plus smoke test succeeds from the packaged artifacts",
+    "Backup and restore is verified by an actual restore",
+    "The README quickstart is verified working on a clean machine"
+  ],
+
+  "deliverables": [
+    "tests/acceptance/ (user-journey tests)",
+    "tests/system/{test_accuracy,test_failure_modes,test_adversarial,test_capacity,test_deployment}.py",
+    "evaluation/frozen_dataset/ (with provenance manifest)",
+    "scripts/{run_acceptance,run_evaluation,self_test,smoke_test}.py",
+    "Dockerfile", "Dockerfile.vision", "docker-compose.prod.yml", "k8s/",
+    "docs/{EVALUATION_REPORT,SIZING,DEPLOYMENT,TROUBLESHOOTING,UPGRADE,KNOWN_LIMITATIONS}.md",
+    "RELEASE_CHECKLIST.md",
+    "CHANGELOG.md"
+  ]
+}

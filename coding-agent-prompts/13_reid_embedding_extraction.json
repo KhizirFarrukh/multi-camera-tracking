@@ -1,0 +1,195 @@
+{
+  "stage": 13,
+  "stage_id": "reid_embedding_extraction",
+  "title": "Vehicle Re-Identification Embedding Extraction",
+  "inherits": "00_GLOBAL_CONTRACT.json",
+  "depends_on": [1, 2, 7, 11],
+  "estimated_complexity": "medium-high",
+
+  "objective": "Produce a visual appearance embedding for every tracked vehicle, pooled across the track's best frames, so that stage 7's matching logic has real vectors to work with in place of stage 5's synthetic ones.",
+
+  "context_for_agent": "Stage 7 already built and validated the matching logic against synthetic embeddings; this stage swaps in a real model. The critical requirements are that outputs satisfy the contract stage 7 assumes (fixed dimension, L2-normalized, version-tagged) and that real-world quality is measured honestly against the synthetic-data assumptions — real embeddings will be worse than synthetic ones, and stage 7's thresholds must be recalibrated accordingly rather than carried over on faith.",
+
+  "tasks": [
+    {
+      "id": "13.1",
+      "name": "Embedder interface",
+      "detail": "Define an Embedder protocol: embed(vehicle_crop) -> Embedding and embed_batch(crops) -> list[Embedding], where Embedding carries the vector, model_version, and the dimension. Every implementation guarantees L2-normalized output of the configured dimension. Provide a FakeEmbedder producing deterministic seeded vectors with controllable similarity structure, so all downstream tests run without model weights."
+    },
+    {
+      "id": "13.2",
+      "name": "Model implementation",
+      "detail": "Implement a torch-backed embedder using a vehicle re-id architecture (OSNet or a ResNet-50 IBN backbone trained on VeRi-776 / VehicleID). Configurable weights path, device, input resolution, and batch size. Lazy weight loading. The model_version string must encode architecture, training dataset, and weights checksum — this is what stage 7's cross-version safety check depends on, so it must be genuinely unique per weights file."
+    },
+    {
+      "id": "13.3",
+      "name": "Crop preprocessing",
+      "detail": "Implement the preprocessing the model expects: resize to the model's input size preserving aspect ratio with padding (do not distort — aspect distortion measurably degrades re-id quality), normalization with the model's mean and std, and BGR/RGB conversion. Preprocessing parameters are bound to the model version, not globally configured, so changing models cannot silently mismatch preprocessing."
+    },
+    {
+      "id": "13.4",
+      "name": "Track-level pooling",
+      "detail": "Implement pool_embeddings(list[Embedding], strategy) with strategies: 'mean' (average then renormalize), 'best_frame' (embedding of the top-ranked frame only), 'weighted_mean' (weighted by best-frame rank and detection confidence), and 'multi_view' (retain up to K diverse embeddings rather than collapsing to one, selected by max-min distance). Default to weighted_mean, and document the tradeoff: pooling reduces storage and noise, while multi_view preserves viewpoint diversity and generally matches better across cameras with very different angles."
+    },
+    {
+      "id": "13.5",
+      "name": "Quality gating",
+      "detail": "Reject or down-weight crops unsuitable for embedding: below a minimum pixel area, excessive blur by Laplacian variance, heavy occlusion where the tracker reports partial visibility, extreme aspect ratios, and severe over/under-exposure. Record the rejection reason. A track with no acceptable crop produces a sighting with no embedding rather than a garbage vector — a bad embedding is worse than none, because it will confidently match the wrong vehicle."
+    },
+    {
+      "id": "13.6",
+      "name": "Sighting enrichment",
+      "detail": "Implement enrich_sighting_with_embedding(sighting, track, embedder) populating the embedding and embedding_model_version fields, applying quality gating and pooling. Must satisfy the stage 2 validators including the normalization tolerance check."
+    },
+    {
+      "id": "13.7",
+      "name": "Batch throughput optimization",
+      "detail": "Embedding runs on every tracked vehicle, so it must batch efficiently: accumulate crops across tracks into batches of the configured size, run inference once, and scatter results back to the correct tracks. Include a timeout-based flush so a partially-filled batch does not stall live processing indefinitely. Verify by test that batching produces results numerically identical to sequential inference."
+    },
+    {
+      "id": "13.8",
+      "name": "Model version migration",
+      "detail": "Implement scripts/reembed.py which re-computes embeddings for stored sightings under a new model version, using stored thumbnails as input. Support resumable batch processing, progress reporting, and a dual-version window during which both versions coexist and queries filter by version. Document the operational procedure — without this, upgrading the model orphans the entire historical dataset."
+    },
+    {
+      "id": "13.9",
+      "name": "Evaluation on real re-id benchmarks",
+      "detail": "Evaluate against a held-out labeled multi-camera vehicle set: rank-1 and rank-5 accuracy, mean average precision, and a CMC curve. Additionally measure the intra-class and inter-class similarity distributions on real data and compare them against stage 5's synthetic assumptions, then recalibrate stage 7's thresholds against the real distributions. Report the gap between synthetic and real explicitly."
+    }
+  ],
+
+  "tests_substage": {
+    "id": "13.T",
+    "description": "Contract compliance is testable without weights and must be exhaustive; model quality tests are marked and use a small labeled set.",
+    "unit_tests": [
+      {
+        "target": "embedding contract compliance",
+        "cases": [
+          "every produced embedding has exactly the configured dimension",
+          "every produced embedding is L2-normalized within 1e-6",
+          "model_version is populated and non-empty on every embedding",
+          "the same crop embedded twice produces an identical vector (determinism, eval mode, no dropout active)",
+          "batch and sequential inference produce numerically identical vectors within float tolerance",
+          "an empty batch returns an empty list without raising"
+        ]
+      },
+      {
+        "target": "crop preprocessing",
+        "cases": [
+          "aspect ratio is preserved and padding is applied rather than distortion — verified on a deliberately non-square crop",
+          "output tensor shape matches the model's expected input",
+          "normalization uses the model-bound mean and std, not global config",
+          "a grayscale input is converted to three channels correctly",
+          "a crop smaller than the input size is upscaled with preserved aspect ratio",
+          "changing model version changes the bound preprocessing parameters accordingly"
+        ]
+      },
+      {
+        "target": "pooling strategies",
+        "cases": [
+          "'mean' of identical embeddings equals that embedding",
+          "'mean' output is renormalized to unit length",
+          "'best_frame' returns exactly the top-ranked frame's embedding",
+          "'weighted_mean' with equal weights equals plain mean",
+          "'weighted_mean' shifts toward the higher-weighted embedding",
+          "'multi_view' returns at most K embeddings",
+          "'multi_view' selects diverse rather than clustered vectors — asserted via minimum pairwise distance against a naive first-K selection",
+          "pooling a single embedding returns it unchanged under every strategy",
+          "pooling an empty list returns None without raising"
+        ]
+      },
+      {
+        "target": "quality gating",
+        "cases": [
+          "a crop below the minimum area is rejected with the correct reason",
+          "a synthetically blurred crop below the sharpness threshold is rejected",
+          "an over-exposed and an under-exposed crop are both rejected",
+          "an extreme aspect ratio is rejected",
+          "an acceptable crop passes all gates",
+          "a track whose crops are all rejected produces a sighting with embedding None and the sighting still validates",
+          "each threshold boundary is tested at the exact value"
+        ]
+      },
+      {
+        "target": "batch processing",
+        "cases": [
+          "crops from multiple tracks batch together and results scatter back to the correct tracks",
+          "a partial batch flushes after the configured timeout",
+          "batch size larger than the available crop count processes correctly",
+          "an exception on one crop does not corrupt results for the others"
+        ]
+      }
+    ],
+    "property_based_tests": [
+      "For arbitrary valid crops, output norm is 1.0 within 1e-6.",
+      "For arbitrary embedding sets, pooled output is unit-normalized under every strategy.",
+      "Pooling is invariant to input order for 'mean' and 'weighted_mean' with correspondingly permuted weights."
+    ],
+    "integration_tests": [
+      {
+        "target": "real model behavior",
+        "cases": [
+          "two crops of the SAME vehicle from different frames produce cosine similarity above a documented floor",
+          "crops of DIFFERENT vehicles produce similarity below a documented ceiling",
+          "the same-vehicle similarity distribution is separated from the different-vehicle distribution — assert the separation margin on the labeled set",
+          "weights load lazily and a missing file raises VisionError naming the path",
+          "runs on CPU when cuda is unavailable",
+          "model_version changes when the weights file changes (checksum verified)"
+        ],
+        "note": "Mark 'requires_models'. These are the tests that reveal whether re-id is actually working."
+      },
+      {
+        "target": "benchmark evaluation",
+        "cases": [
+          "rank-1, rank-5, and mAP are computed on the held-out labeled set and asserted against committed baselines",
+          "the CMC curve is generated and written to docs output",
+          "real intra-class and inter-class similarity distributions are measured and compared against stage 5's synthetic parameters, with the gap reported explicitly"
+        ]
+      },
+      {
+        "target": "stage 7 recalibration",
+        "cases": [
+          "stage 7's thresholds are re-swept against real embedding distributions and updated in config",
+          "stage 7's hard-negative false-positive target still holds under real embeddings — if it does not, that is a finding to report, not a number to quietly relax",
+          "stage 7's matching tests re-run against real embeddings and pass with the recalibrated thresholds"
+        ]
+      },
+      {
+        "target": "re-embedding migration",
+        "cases": [
+          "reembed.py processes stored sightings from thumbnails and updates their vectors and versions",
+          "the job is resumable — interrupting and restarting does not duplicate or skip work",
+          "during the dual-version window, queries filtered by version return only matching-version results",
+          "cross-version similarity computation still raises as required by stage 7"
+        ]
+      },
+      {
+        "target": "performance",
+        "cases": [
+          "throughput on CPU and GPU is measured across batch sizes and documented (marked 'slow')",
+          "memory usage is bounded across a long processing run"
+        ]
+      }
+    ]
+  },
+
+  "exit_criteria": [
+    "Every emitted embedding satisfies the dimension, normalization, and version contract stage 7 assumes",
+    "Stage 7 thresholds are recalibrated against real embedding distributions, not inherited from synthetic ones",
+    "The synthetic-to-real quality gap is measured and documented explicitly",
+    "A track with only poor-quality crops emits no embedding rather than a misleading one",
+    "Model migration is resumable and preserves query correctness during the dual-version window"
+  ],
+
+  "deliverables": [
+    "src/multicam_tracker/vision/{embedder_protocol,reid_embedder,fake_embedder,reid_preprocess,pooling,quality_gate,embedding_enrichment}.py",
+    "scripts/reembed.py", "scripts/evaluate_reid.py",
+    "tests/unit/vision/ (per module)",
+    "tests/integration/vision/test_reid_model.py",
+    "tests/integration/vision/test_reid_benchmark.py",
+    "tests/integration/vision/test_stage7_recalibration.py",
+    "tests/integration/vision/baselines/reid_metrics_baseline.json",
+    "tests/fixtures/reid/ (labeled multi-camera vehicle crops)",
+    "docs/REID_EMBEDDINGS.md with CMC curves and the synthetic-versus-real analysis"
+  ]
+}

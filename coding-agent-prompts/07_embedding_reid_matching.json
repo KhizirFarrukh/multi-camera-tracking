@@ -1,0 +1,189 @@
+{
+  "stage": 7,
+  "stage_id": "embedding_reid_matching",
+  "title": "Visual Re-Identification Matching (Embedding Fallback Path)",
+  "inherits": "00_GLOBAL_CONTRACT.json",
+  "depends_on": [1, 2, 3, 4, 5, 6],
+  "estimated_complexity": "medium-high",
+
+  "objective": "Match sightings to a target by learned visual appearance when the plate is unreadable, using vector similarity search constrained by topology and time, with confidence calibrated so that visual-only matches are never treated as equivalent to plate matches.",
+
+  "context_for_agent": "Re-id is inherently weaker evidence than a plate: many vehicles share a make, model, and color. Treat embedding matches as supporting evidence that usually requires either corroboration (a plate match elsewhere on the same trajectory) or human review. Build the logic here against stage 5's synthetic embeddings; real model weights arrive in stage 12. Nothing in this stage should import torch.",
+
+  "tasks": [
+    {
+      "id": "7.1",
+      "name": "Similarity primitives",
+      "detail": "Implement cosine_similarity(a, b) and batch_cosine_similarity(query, matrix) using numpy, assuming L2-normalized inputs but validating that assumption and raising ValidationError if violated (do not silently renormalize — a non-normalized embedding indicates an upstream bug). Provide top_k_similar(query, candidates, k) returning indices and scores sorted descending."
+    },
+    {
+      "id": "7.2",
+      "name": "Multi-reference target representation",
+      "detail": "A target may have several reference embeddings (multiple confirmed sightings from different angles). Implement configurable aggregation strategies: 'max' (highest similarity to any reference — most permissive), 'mean' (similarity to the averaged reference vector), and 'topk_mean' (mean of the k highest similarities). Default to 'max' and document why. Aggregation must handle a single reference gracefully."
+    },
+    {
+      "id": "7.3",
+      "name": "Constrained candidate retrieval",
+      "detail": "Implement find_embedding_matches(target, sighting_repo, topology, anchor_sighting=None, time_window=None, camera_ids=None). When an anchor sighting is supplied, derive the candidate camera set and time window from topology.reachable_within rather than searching globally — this is the key precision lever, because restricting the search space is far more effective than raising the similarity threshold. Fall back to a global time-windowed search only when no anchor exists, and log clearly when that happens."
+    },
+    {
+      "id": "7.4",
+      "name": "Two-tier thresholding",
+      "detail": "Classify each candidate using two thresholds from config: at or above embedding_auto_accept_min_similarity -> auto_accepted; between embedding_review_min_similarity and that -> pending_review; below -> excluded. Additionally enforce a margin rule: if the top candidate's similarity exceeds the runner-up's by less than a configured margin, downgrade the top candidate to pending_review regardless of its absolute score. Two near-identical vehicles should never be auto-resolved."
+    },
+    {
+      "id": "7.5",
+      "name": "Combined scoring with plate evidence",
+      "detail": "Implement combine_evidence(plate_result, embedding_result) producing a single MatchCandidate. Rules: a strong plate match dominates and the method is recorded as plate_*; when the plate is absent the method is 'embedding' and the score is capped at a configured ceiling below the plate auto-accept threshold, so a visual-only match can never outrank a plate match; when plate and embedding agree, confidence is boosted (bounded at 1.0); when they actively disagree (strong plate match to target but low embedding similarity, or vice versa) the result is flagged conflicting and forced to pending_review with the disagreement recorded."
+    },
+    {
+      "id": "7.6",
+      "name": "Reference embedding management",
+      "detail": "Implement add_reference_embedding(target, sighting) invoked when a human confirms a match, and prune_references(target, max_refs) which keeps a diverse subset (greedy max-min-distance selection) rather than the most recent, so the reference set spans viewpoints instead of clustering. Guard against reference-set poisoning: adding a reference from a sighting whose match was only pending_review must be rejected."
+    },
+    {
+      "id": "7.7",
+      "name": "Drift and model-version safety",
+      "detail": "Embeddings are only comparable within one model version. Enforce that similarity is never computed across differing embedding_model_version values — raise MatchingError naming both versions. Implement a repository query filtering by model version and document the re-embedding migration path for when the model is upgraded."
+    },
+    {
+      "id": "7.8",
+      "name": "Evaluation harness extension",
+      "detail": "Extend stage 6's evaluation to report embedding-path metrics separately and in combination: precision/recall for plate-only, embedding-only, and combined evidence; rank-1 and rank-5 accuracy; and a CMC-style curve. Report specifically the recall recovered on sightings where plate OCR failed entirely — that number is the entire justification for this stage's existence."
+    },
+    {
+      "id": "7.9",
+      "name": "Threshold calibration",
+      "detail": "Sweep similarity thresholds and the margin rule across the 'degraded' and 'hard_negatives' scenarios. Choose defaults that keep embedding-path false-positive rate below a documented target, accepting reduced recall. Commit the sweep results to docs/ and write the chosen values into config with citations."
+    }
+  ],
+
+  "tests_substage": {
+    "id": "7.T",
+    "description": "The decisive tests are the hard-negative ones. Any threshold looks excellent on easy data; only near-identical decoys reveal whether the configuration is actually safe.",
+    "unit_tests": [
+      {
+        "target": "similarity primitives",
+        "cases": [
+          "cosine similarity of a vector with itself is 1.0 within floating tolerance",
+          "cosine similarity of orthogonal vectors is 0.0",
+          "cosine similarity of opposite vectors is -1.0",
+          "non-normalized input raises ValidationError and is not silently renormalized",
+          "batch similarity matches the elementwise result for every row",
+          "top_k_similar returns exactly k results sorted descending",
+          "top_k_similar with k greater than the candidate count returns all candidates without raising",
+          "empty candidate set returns an empty result",
+          "zero vector input raises rather than producing NaN"
+        ]
+      },
+      {
+        "target": "multi-reference aggregation",
+        "cases": [
+          "'max' returns the highest individual similarity",
+          "'mean' over identical references equals the single-reference similarity",
+          "'topk_mean' with k=1 equals 'max'",
+          "single-reference target produces the same result under all three strategies",
+          "adding a poor-quality reference lowers 'mean' but does not lower 'max' (documents the tradeoff)"
+        ]
+      },
+      {
+        "target": "constrained retrieval",
+        "cases": [
+          "with an anchor sighting, only topology-reachable cameras are queried — asserted via the fake repository's call log",
+          "without an anchor, the global time-windowed path is taken and a warning is logged",
+          "candidates outside the derived arrival window are excluded even when their similarity is very high",
+          "sightings with NULL embeddings are excluded without raising",
+          "camera_ids filter intersects correctly with the topology-derived set"
+        ]
+      },
+      {
+        "target": "two-tier thresholding and margin rule",
+        "cases": [
+          "similarity exactly at the auto-accept threshold is auto_accepted (boundary inclusive)",
+          "similarity just below auto-accept is pending_review",
+          "similarity exactly at the review floor is pending_review; just below is excluded",
+          "top candidate exceeding auto-accept but within the margin of the runner-up is downgraded to pending_review",
+          "top candidate exceeding auto-accept with a comfortable margin remains auto_accepted",
+          "a single candidate with no runner-up is not downgraded by the margin rule"
+        ]
+      },
+      {
+        "target": "combine_evidence",
+        "cases": [
+          "strong plate plus strong embedding yields the plate method and boosted confidence bounded at 1.0",
+          "no plate plus strong embedding yields the embedding method with the score capped below the plate auto-accept threshold",
+          "strong plate plus weak embedding is flagged conflicting and forced to pending_review",
+          "weak plate plus strong embedding is flagged conflicting and forced to pending_review",
+          "neither present raises or returns no-match — document and test the chosen behavior",
+          "an embedding-only match can never produce a score exceeding any valid plate_exact match"
+        ]
+      },
+      {
+        "target": "reference management",
+        "cases": [
+          "adding a reference from a confirmed sighting succeeds",
+          "adding a reference from a pending_review sighting is rejected with a clear error",
+          "prune_references keeps the configured maximum count",
+          "prune_references selects a diverse subset — verified by asserting the retained set's minimum pairwise distance exceeds that of a recency-based selection on constructed data",
+          "pruning a set already at or below the maximum is a no-op"
+        ]
+      },
+      {
+        "target": "model version safety",
+        "cases": [
+          "comparing embeddings with differing model versions raises MatchingError naming both versions",
+          "the repository query filters to a single model version",
+          "a dataset containing mixed versions does not silently produce cross-version comparisons"
+        ]
+      }
+    ],
+    "property_based_tests": [
+      "For random normalized vectors, cosine similarity always lies in [-1, 1].",
+      "combine_evidence output score is always in [0,1] for arbitrary valid inputs.",
+      "The embedding-only score ceiling is never exceeded across randomized inputs."
+    ],
+    "integration_tests": [
+      {
+        "target": "evaluation on synthetic scenarios",
+        "cases": [
+          "on 'clean', embedding-path rank-1 accuracy is at or near 1.0",
+          "on 'degraded', combined evidence recall measurably exceeds plate-only recall — quantify the recovery on plate-failed sightings",
+          "on 'hard_negatives', embedding-path false-positive rate stays below the documented target",
+          "on 'hard_negatives', no decoy is auto_accepted; the margin rule demotes the ambiguous cases",
+          "on 'sparse_coverage', topology-constrained retrieval outperforms unconstrained retrieval at equal thresholds — assert the precision difference, proving the constraint earns its complexity",
+          "combined evidence never scores below plate-only evidence on any sighting (the fallback never hurts)"
+        ]
+      },
+      {
+        "target": "regression guard",
+        "cases": [
+          "all reported metrics are asserted against committed baselines with tolerance so quality regressions fail CI"
+        ]
+      },
+      {
+        "target": "vector search integration",
+        "cases": [
+          "find_embedding_matches against a real Postgres pgvector repository returns the same ranking as the in-memory implementation on identical data",
+          "HNSW approximate results agree with exact search on the top-1 result for the seeded dataset",
+          "search over 100,000 embeddings completes within a documented budget (marked 'slow')"
+        ]
+      }
+    ]
+  },
+
+  "exit_criteria": [
+    "Embedding-only matches are provably incapable of outranking plate matches",
+    "Hard-negative false-positive rate meets the documented target and is regression-guarded",
+    "Topology-constrained retrieval is demonstrated by measurement to beat unconstrained retrieval",
+    "Cross-model-version comparison is impossible by construction",
+    "No torch or model-weight dependency is introduced in this stage"
+  ],
+
+  "deliverables": [
+    "src/multicam_tracker/matching/{similarity,aggregation,embedding_search,evidence,references,versioning}.py",
+    "tests/unit/matching/ (new modules)",
+    "tests/integration/matching/test_embedding_evaluation.py",
+    "tests/integration/matching/baselines/embedding_metrics_baseline.json",
+    "docs/REID_MATCHING.md with threshold sweeps, CMC curves, and the documented tradeoffs"
+  ]
+}

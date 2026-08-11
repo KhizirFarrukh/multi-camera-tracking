@@ -1,0 +1,195 @@
+{
+  "stage": 18,
+  "stage_id": "human_review_workflow",
+  "title": "Human-in-the-Loop Review and Match Adjudication",
+  "inherits": "00_GLOBAL_CONTRACT.json",
+  "depends_on": [1, 2, 3, 7, 8, 16, 17],
+  "estimated_complexity": "medium",
+
+  "objective": "Give a human reviewer an efficient, well-instrumented way to adjudicate every match the system was not confident enough to auto-accept, and feed those decisions back into the system as reference data and quality measurement.",
+
+  "context_for_agent": "The thresholds in stages 6 and 7 deliberately route the uncertain middle to human review rather than guessing. That design only works if reviewing is fast and well-supported — a review queue that is tedious to work will be rubber-stamped, which is worse than no review at all because it launders a low-confidence guess into a confirmed fact. Optimize for the reviewer making a correct decision quickly, and instrument the queue so rubber-stamping is detectable.",
+
+  "tasks": [
+    {
+      "id": "18.1",
+      "name": "Review queue model",
+      "detail": "Implement a queue over match candidates with review_status 'pending_review', ordered by a configurable priority: target urgency, match confidence (recommend reviewing the most ambiguous first, since those carry the most information), recency, and trajectory impact (a match that would connect two otherwise disjoint trajectory fragments matters more than a redundant one). Support claiming an item so two reviewers do not duplicate work, with claim expiry so abandoned claims return to the queue."
+    },
+    {
+      "id": "18.2",
+      "name": "Review context assembly",
+      "detail": "For each queued item, assemble everything the reviewer needs in one view: the candidate sighting's thumbnail at full available resolution, the target's reference images, the plate read with per-character confidence, the embedding similarity, the temporal and spatial context (what the trajectory looks like with and without this match), and the specific reason it fell into review. The comparison the reviewer must make is visual — make the two images directly comparable side by side at adequate size."
+    },
+    {
+      "id": "18.3",
+      "name": "Adjudication actions",
+      "detail": "Support: confirm (accept the match), reject (this is not the target), uncertain (defer with a note — never force a binary decision when the evidence genuinely does not support one), and flag-quality (the underlying image or read is unusable, which is distinct from the match being wrong and should feed a different metric). Every action records the actor, timestamp, decision, optional note, and time spent on the item."
+    },
+    {
+      "id": "18.4",
+      "name": "Decision propagation",
+      "detail": "On confirm: update match review_status, add the sighting as a reference embedding via stage 7's guarded path, and recompute the affected trajectory. On reject: exclude the sighting and recompute. Recomputation must be transactional and must record which trajectories changed as a result, so a decision's downstream consequences are visible rather than silent."
+    },
+    {
+      "id": "18.5",
+      "name": "Bulk review",
+      "detail": "Support reviewing several visually similar candidates together (e.g. successive frames of one track, or the same plate across nearby cameras) with a shared decision, since these are genuinely one judgment rather than many. Guard against over-broad bulk actions with a configurable maximum batch size and a required explicit confirmation showing every included item — bulk review is where rubber-stamping is most likely."
+    },
+    {
+      "id": "18.6",
+      "name": "Reviewer agreement measurement",
+      "detail": "Support optional double-review sampling: a configurable fraction of items is routed to two independent reviewers, and inter-reviewer agreement is measured (Cohen's kappa). Disagreements are surfaced for adjudication and are the most valuable signal available about where the system's thresholds sit relative to genuine human uncertainty."
+    },
+    {
+      "id": "18.7",
+      "name": "Threshold feedback loop",
+      "detail": "Aggregate review decisions into a labeled dataset and report: the confirm rate by confidence band (if items just below auto-accept are confirmed 99% of the time, the threshold is too conservative; if items just above are frequently wrong, it is too permissive), the reject rate by match method, and per-camera and per-condition quality issues. Provide scripts/analyze_review_decisions.py producing a recommended threshold adjustment with its supporting evidence. Recommend, do not auto-apply — a threshold change is a decision with consequences that deserves a human."
+    },
+    {
+      "id": "18.8",
+      "name": "Rubber-stamp detection",
+      "detail": "Instrument for the failure mode this stage exists to prevent: alert on implausibly short median review times, on confirm rates approaching 100% for a reviewer whose peers reject substantially more, and on bulk actions consistently at the maximum batch size. Surface these to administrators as a quality signal, not as an accusation."
+    },
+    {
+      "id": "18.9",
+      "name": "Review UI",
+      "detail": "Implement the reviewer interface following stage 17's design direction: side-by-side image comparison at maximum available resolution, keyboard shortcuts for every action (a reviewer working a queue should never need the mouse), the trajectory context rendered inline, and queue progress. Prefetch the next item so the interface never stalls between decisions."
+    }
+  ],
+
+  "tests_substage": {
+    "id": "18.T",
+    "description": "Test both the mechanics and the safeguards. The safeguard tests matter most, because the mechanics failing is obvious while the safeguards failing is silent.",
+    "unit_tests": [
+      {
+        "target": "queue ordering and claiming",
+        "cases": [
+          "items are ordered by the configured priority function",
+          "the most ambiguous items surface first under the recommended default ordering",
+          "a claimed item is not served to a second reviewer",
+          "an expired claim returns the item to the queue",
+          "claiming an already-claimed item fails cleanly with a clear message",
+          "releasing a claim returns the item immediately",
+          "an empty queue returns an empty state rather than raising",
+          "adjudicated items leave the queue"
+        ]
+      },
+      {
+        "target": "adjudication actions",
+        "cases": [
+          "confirm sets review_status to confirmed and records the full decision record",
+          "reject sets review_status to rejected",
+          "uncertain leaves the item pending with the note attached and does not re-serve it immediately to the same reviewer",
+          "flag-quality records the distinct quality issue and is counted separately from a rejection",
+          "time-spent is recorded accurately using an injected clock",
+          "an action on an item claimed by another reviewer is refused",
+          "an action on an already-adjudicated item is refused"
+        ]
+      },
+      {
+        "target": "decision propagation",
+        "cases": [
+          "confirm adds the sighting as a reference embedding",
+          "confirm on a sighting with no embedding does not add a reference and does not raise",
+          "confirm triggers trajectory recomputation and the trajectory reflects the newly included sighting",
+          "reject triggers recomputation and the sighting is excluded",
+          "recomputation is transactional — a simulated failure mid-recompute leaves the prior trajectory intact",
+          "the set of changed trajectories is recorded and returned",
+          "confirming a match that changes nothing (already included) is a safe no-op"
+        ]
+      },
+      {
+        "target": "bulk review safeguards",
+        "cases": [
+          "a bulk batch above the maximum size is rejected",
+          "bulk confirmation requires the explicit confirmation payload listing every item",
+          "a bulk action applies the decision to every included item",
+          "a bulk action failing partway is transactional — all or nothing",
+          "items in a bulk batch that were claimed by another reviewer are excluded and reported rather than silently included"
+        ]
+      },
+      {
+        "target": "agreement measurement",
+        "cases": [
+          "the configured sampling fraction routes approximately that fraction to double review",
+          "two agreeing reviews produce agreement and no escalation",
+          "two disagreeing reviews are surfaced for adjudication",
+          "Cohen's kappa is computed correctly against hand-verified inputs including the perfect-agreement and chance-agreement edge cases",
+          "a reviewer never receives the same item twice in a double-review pair"
+        ]
+      },
+      {
+        "target": "rubber-stamp detection",
+        "cases": [
+          "an implausibly short median review time triggers the alert",
+          "a reviewer with a near-100% confirm rate against a peer baseline triggers the alert",
+          "consistent maximum-size bulk actions trigger the alert",
+          "a reviewer with normal patterns triggers no alert",
+          "each detection threshold is tested at its exact boundary"
+        ]
+      }
+    ],
+    "integration_tests": [
+      {
+        "target": "end-to-end review workflow",
+        "cases": [
+          "a search producing pending_review matches populates the queue",
+          "a reviewer claims, reviews, and confirms an item through the API, and the trajectory updates accordingly",
+          "the confirmed sighting becomes a reference embedding and improves subsequent matching for that target — asserted by measuring match results before and after",
+          "a rejected sighting is excluded from subsequent trajectories for that target",
+          "every review action appears in the stage 16 audit log with the correct actor"
+        ]
+      },
+      {
+        "target": "threshold feedback analysis",
+        "cases": [
+          "confirm rate by confidence band is computed correctly against a seeded decision set",
+          "a synthetic decision set where the threshold is clearly too conservative produces a recommendation to lower it, with supporting numbers",
+          "a synthetic set where it is too permissive produces the opposite recommendation",
+          "an ambiguous set produces no strong recommendation rather than a spurious one",
+          "recommendations are never auto-applied to configuration — explicitly asserted"
+        ]
+      },
+      {
+        "target": "review UI",
+        "cases": [
+          "the side-by-side comparison renders both images at full available resolution",
+          "every action is reachable by keyboard shortcut",
+          "the next item is prefetched and the interface does not stall between decisions",
+          "trajectory context renders inline with and without the candidate match",
+          "queue progress is accurate"
+        ]
+      },
+      {
+        "target": "concurrency",
+        "cases": [
+          "two reviewers working the queue simultaneously never receive the same item",
+          "simultaneous adjudication attempts on one item resolve to exactly one winner",
+          "concurrent trajectory recomputation for the same target serializes correctly without corruption"
+        ]
+      }
+    ]
+  },
+
+  "exit_criteria": [
+    "No item can be adjudicated by two reviewers simultaneously",
+    "Every decision propagates transactionally to trajectories and reference sets",
+    "Rubber-stamp detection triggers correctly on constructed patterns",
+    "Threshold recommendations are evidence-backed and never auto-applied",
+    "Every review action is audited with its actor"
+  ],
+
+  "deliverables": [
+    "src/multicam_tracker/review/{__init__,queue,claims,context,adjudication,propagation,bulk,agreement,feedback,integrity_monitor}.py",
+    "src/multicam_tracker/api/routes/review.py",
+    "web/review.html", "web/js/review.js",
+    "scripts/analyze_review_decisions.py",
+    "tests/unit/review/ (one module per source module)",
+    "tests/integration/review/test_review_workflow_e2e.py",
+    "tests/integration/review/test_threshold_feedback.py",
+    "tests/integration/review/test_review_concurrency.py",
+    "tests/integration/web/test_review_ui.spec.js",
+    "docs/REVIEW.md documenting reviewer procedures and quality safeguards"
+  ]
+}

@@ -1,0 +1,194 @@
+{
+  "stage": 10,
+  "stage_id": "video_ingestion",
+  "title": "Video Source Abstraction, Frame Sampling, and Decode Pipeline",
+  "inherits": "00_GLOBAL_CONTRACT.json",
+  "depends_on": [1, 2, 9],
+  "estimated_complexity": "medium",
+
+  "objective": "Provide a uniform, testable interface for pulling timestamped frames from any source — recorded files or live streams — with configurable sampling, robust error recovery, and correct timestamp attribution for every frame delivered.",
+
+  "context_for_agent": "Everything downstream consumes Frame objects, so this abstraction determines how testable the vision stages are. Make the source pluggable and provide a synthetic source that yields deterministic generated frames, so detection and pipeline tests never need real video files. Live stream handling must assume the network is unreliable, because it is.",
+
+  "tasks": [
+    {
+      "id": "10.1",
+      "name": "Frame model",
+      "detail": "Define a Frame dataclass: image (numpy ndarray, BGR), frame_index (int), raw_timestamp, timestamp_utc (post-correction, from stage 9), source_id, camera_id, width, height, and is_keyframe. Keep it lightweight — no per-frame copies of large metadata. Document the memory ownership convention explicitly (whether consumers may mutate the array) and enforce it consistently."
+    },
+    {
+      "id": "10.2",
+      "name": "VideoSource protocol",
+      "detail": "Define a VideoSource protocol: open(), frames() -> Iterator[Frame], close(), properties (fps, frame_count when known, resolution, source type, duration), and is_live. Support use as a context manager guaranteeing release of decoder resources on any exit path, including exceptions and generator abandonment."
+    },
+    {
+      "id": "10.3",
+      "name": "FileVideoSource",
+      "detail": "Implement decoding of recorded files via OpenCV with a PyAV fallback for containers OpenCV handles poorly. Read fps as an exact rational where the container provides it and pass it to stage 9's derivation. Support seeking to a start offset and limiting to a duration. Handle: corrupt frames mid-file (skip and count, do not abort the whole run), truncated files (yield what is readable then terminate cleanly), and unsupported codecs (raise IngestError naming the codec)."
+    },
+    {
+      "id": "10.4",
+      "name": "LiveStreamSource",
+      "detail": "Implement RTSP/HTTP stream ingestion with: configurable connection and read timeouts, automatic reconnection with exponential backoff and jitter, a bounded frame buffer that drops oldest frames under backpressure (never block the decoder, never grow without bound), and connection state exposed for monitoring. Every drop is counted and logged. Latency is more valuable than completeness for live tracking — document that tradeoff in code."
+    },
+    {
+      "id": "10.5",
+      "name": "SyntheticVideoSource",
+      "detail": "Implement a test source generating deterministic frames from a seed: solid colors, moving rectangles, or optionally rendered plate-like text. Configurable fps, duration, resolution, and injectable fault modes (a corrupt frame at index N, a stall of N seconds, a disconnect at index N). This is the source that makes stages 11-13 testable in CI without media files or GPUs."
+    },
+    {
+      "id": "10.6",
+      "name": "Sampling strategies",
+      "detail": "Implement a FrameSampler protocol with: EveryNthFrame, TargetFpsSampler (sample to approximate a target fps regardless of source fps — the default, since detection at 5 fps is normally sufficient), KeyframeOnlySampler, and AdaptiveSampler (increase rate when recent frames contained detections, decrease when idle). Sampling must never alter a frame's timestamp — the delivered timestamp is always the true capture time of that frame, never an interpolated one."
+    },
+    {
+      "id": "10.7",
+      "name": "Motion prefilter",
+      "detail": "Implement an optional cheap motion-detection gate (frame differencing or MOG2 background subtraction) that skips frames with no significant change before they reach the expensive detector. Configurable sensitivity and a minimum forced-sample interval so a stationary-but-present vehicle is still periodically detected. Report the skip ratio as a metric — this is typically the single largest compute saving in the whole pipeline."
+    },
+    {
+      "id": "10.8",
+      "name": "Region of interest and preprocessing",
+      "detail": "Support per-camera ROI masks (ignore sidewalk, sky, or a neighboring property), configured as polygons in the camera config. Also support per-camera resize, rotation, and undistortion parameters. ROI must be applied consistently, and bbox coordinates in emitted sightings must be expressed in ORIGINAL source-frame coordinates regardless of any preprocessing — document and test this, since coordinate-space mismatches are a classic silent bug."
+    },
+    {
+      "id": "10.9",
+      "name": "Multi-source orchestration",
+      "detail": "Implement a MultiSourceReader running several sources concurrently (thread or asyncio, choose and document), yielding frames tagged with camera_id into a unified queue. One failing source must never stall the others. Provide per-source health status and graceful shutdown that drains cleanly without losing buffered frames."
+    },
+    {
+      "id": "10.10",
+      "name": "Resource management",
+      "detail": "Guarantee decoder handles, sockets, and buffers are released on all paths. Enforce a configurable memory ceiling on buffered frames. Provide explicit backpressure semantics between the reader and consumers. Include a test that opens and closes many sources in sequence and asserts no file-descriptor or memory growth."
+    }
+  ],
+
+  "tests_substage": {
+    "id": "10.T",
+    "description": "Use SyntheticVideoSource for the bulk of testing; keep real-media tests few, small, and clearly marked. Fault injection is the point of this stage's test suite.",
+    "unit_tests": [
+      {
+        "target": "SyntheticVideoSource",
+        "cases": [
+          "yields exactly the configured number of frames",
+          "frame indices are sequential starting at 0",
+          "timestamps advance by exactly 1/fps as exact rational arithmetic",
+          "identical seed produces identical frame content across runs",
+          "resolution and fps properties match configuration",
+          "injected corrupt frame at index N is reported and skipped without aborting the run",
+          "injected disconnect at index N terminates or reconnects per the configured behavior",
+          "injected stall is detected by the read timeout"
+        ]
+      },
+      {
+        "target": "sampling strategies",
+        "cases": [
+          "EveryNthFrame yields exactly every Nth frame and no others",
+          "N=1 yields every frame; N greater than the frame count yields exactly one frame",
+          "TargetFpsSampler at half the source fps yields approximately half the frames within tolerance",
+          "TargetFpsSampler with a target above the source fps yields every frame and does not duplicate any",
+          "sampled frames retain their ORIGINAL timestamps and frame indices — never renumbered or interpolated",
+          "KeyframeOnlySampler yields only frames flagged is_keyframe",
+          "AdaptiveSampler increases rate after a detection signal and decays back when idle",
+          "all samplers handle an empty source without raising"
+        ]
+      },
+      {
+        "target": "motion prefilter",
+        "cases": [
+          "identical consecutive frames are skipped",
+          "a frame with significant change passes through",
+          "the minimum forced-sample interval guarantees periodic sampling even in a fully static scene",
+          "the skip-ratio metric is accurate against a known input",
+          "sensitivity configuration measurably changes the skip rate"
+        ]
+      },
+      {
+        "target": "ROI and preprocessing",
+        "cases": [
+          "an ROI mask zeroes or excludes exactly the specified polygon region",
+          "resize changes the processed frame dimensions as configured",
+          "rotation applies the configured angle",
+          "coordinates emitted after preprocessing map back to ORIGINAL source-frame coordinates — verified with a known point through resize, rotation, and crop, individually and composed",
+          "an ROI polygon extending outside the frame bounds is clipped rather than raising",
+          "an empty or degenerate polygon raises a clear configuration error"
+        ]
+      },
+      {
+        "target": "resource management",
+        "cases": [
+          "context manager releases the decoder on normal exit",
+          "context manager releases the decoder when the body raises",
+          "abandoning the frame generator mid-iteration still releases resources",
+          "opening and closing 200 sources sequentially shows no file-descriptor growth",
+          "the buffered-frame memory ceiling is enforced and oldest frames are dropped, not newest"
+        ]
+      }
+    ],
+    "integration_tests": [
+      {
+        "target": "FileVideoSource with real media",
+        "cases": [
+          "a small committed sample video decodes with the expected frame count and resolution",
+          "fps is read as an exact rational and matches the container",
+          "seeking to an offset yields the correct first frame index and timestamp",
+          "a duration limit stops decoding at the right frame",
+          "a deliberately truncated file yields readable frames then terminates cleanly with a warning",
+          "an unsupported codec raises IngestError naming the codec",
+          "a variable-frame-rate file produces correct per-frame timestamps from PTS",
+          "the PyAV fallback engages for a container OpenCV fails on"
+        ],
+        "note": "Commit only tiny sample files (a few hundred KB). Mark these 'integration'."
+      },
+      {
+        "target": "LiveStreamSource",
+        "cases": [
+          "connects to a locally-served test stream and yields frames",
+          "reconnects automatically after the server drops the connection",
+          "backoff intervals increase as configured and include jitter",
+          "gives up after the configured maximum retry count and reports a terminal state",
+          "buffer overflow drops the oldest frames and increments the drop counter",
+          "a slow consumer does not stall the decoder",
+          "graceful shutdown terminates within the configured timeout"
+        ],
+        "note": "Serve a loop of the sample file over local RTSP/HTTP in a fixture rather than depending on any external network."
+      },
+      {
+        "target": "MultiSourceReader",
+        "cases": [
+          "frames from three concurrent sources are yielded tagged with the correct camera_id",
+          "one source raising an exception does not stop the others",
+          "per-source health status reflects a failed source accurately",
+          "shutdown drains buffered frames without loss",
+          "throughput with three sources exceeds sequential processing (marked 'slow')"
+        ]
+      },
+      {
+        "target": "timestamp correctness end to end",
+        "cases": [
+          "frames from a file with a known creation time and configured camera offset carry the exactly expected timestamp_utc",
+          "frames from two sources with different configured offsets are correctly comparable in UTC"
+        ]
+      }
+    ]
+  },
+
+  "exit_criteria": [
+    "SyntheticVideoSource is complete enough that stages 11-13 need no real media in CI",
+    "Every emitted bbox coordinate is verified to be in original source-frame space",
+    "Live source reconnects, bounds its memory, and never blocks its decoder",
+    "No resource leaks across repeated open/close cycles",
+    "Sampling never alters or interpolates a frame's timestamp"
+  ],
+
+  "deliverables": [
+    "src/multicam_tracker/ingest/{__init__,frame,protocol,file_source,live_source,synthetic_source,samplers,motion,preprocess,multi_source}.py",
+    "tests/unit/ingest/ (one module per source module)",
+    "tests/integration/ingest/test_file_source.py",
+    "tests/integration/ingest/test_live_source.py",
+    "tests/integration/ingest/test_multi_source.py",
+    "tests/fixtures/media/sample_*.mp4 (tiny committed clips including a truncated and a VFR example)",
+    "tests/fixtures/local_stream_server.py",
+    "docs/INGESTION.md documenting sampling strategies and their tradeoffs"
+  ]
+}

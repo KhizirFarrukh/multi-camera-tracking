@@ -1,0 +1,199 @@
+{
+  "stage": 6,
+  "stage_id": "plate_matching_engine",
+  "title": "Plate Normalization and Fuzzy Matching Engine",
+  "inherits": "00_GLOBAL_CONTRACT.json",
+  "depends_on": [1, 2, 3, 5],
+  "estimated_complexity": "medium",
+
+  "objective": "Turn noisy OCR plate strings into reliable matches against a target plate, using normalization, ambiguity folding, and edit-distance matching with calibrated confidence — evaluated quantitatively against the synthetic ground truth from stage 5.",
+
+  "context_for_agent": "Plate matching is the primary identification path, so its precision matters more than its recall: a false positive puts an innocent vehicle on a stolen-car trajectory. Bias thresholds toward precision and route the uncertain middle to human review rather than auto-accepting it. Everything here is pure string logic — fully unit-testable with no database, no video, no models.",
+
+  "tasks": [
+    {
+      "id": "6.1",
+      "name": "Normalization",
+      "detail": "Implement normalize_plate(raw: str) -> str applying exactly the rules in the global contract's plate_normalization section: uppercase, strip non-alphanumerics, optional configurable regional prefix/suffix stripping (default off). Handle Unicode input by transliterating to ASCII where unambiguous and rejecting otherwise. Empty result after normalization returns None, not an empty string. The function is pure and side-effect free."
+    },
+    {
+      "id": "6.2",
+      "name": "Ambiguity folding",
+      "detail": "Implement fold_ambiguous(normalized: str) -> str mapping each member of a confusion group to a canonical representative (e.g. O and 0 -> '0', I/L/1 -> '1', S/5 -> '5', B/8 -> '8', Z/2 -> '2', G/6 -> '6', Q -> '0'). The mapping is loaded from config so it can be tuned per region. CRITICAL: folding is used only for comparison; the folded form must never be written to plate_text_normalized or displayed to a user as the plate."
+    },
+    {
+      "id": "6.3",
+      "name": "Edit distance",
+      "detail": "Implement a Damerau-Levenshtein distance (transpositions matter — OCR swaps adjacent characters) with an early-exit max_distance cutoff for performance, since it will be called across large candidate sets. Also implement a weighted variant where substitutions within a confusion group cost less (configurable, default 0.5) than arbitrary substitutions (cost 1.0), because a 0->O confusion is far more likely than a 0->W confusion."
+    },
+    {
+      "id": "6.4",
+      "name": "Match classification",
+      "detail": "Implement classify_plate_match(candidate, target) -> PlateMatchResult with fields: method (plate_exact | plate_fuzzy | no_match), edit_distance, weighted_distance, folded_equal (bool), and length_delta. Classification rules: identical normalized strings -> plate_exact; folded forms equal but normalized differ -> plate_fuzzy with distance computed on normalized forms; weighted distance within the configured max -> plate_fuzzy; otherwise no_match. Length differences beyond a configured tolerance short-circuit to no_match (a 4-character read and a 7-character plate are not the same plate)."
+    },
+    {
+      "id": "6.5",
+      "name": "Match confidence scoring",
+      "detail": "Implement score_plate_match(result, ocr_confidence) -> float in [0,1] combining: base weight by method (exact highest, fuzzy lower), a penalty increasing with weighted edit distance, and multiplication by the OCR confidence. All weights come from config/thresholds.yaml. The function must be monotonic: increasing OCR confidence never decreases the score, and increasing edit distance never increases it. Assert this property in tests."
+    },
+    {
+      "id": "6.6",
+      "name": "Candidate search",
+      "detail": "Implement find_plate_matches(target_plate, sighting_repo, time_window=None, camera_ids=None) using a two-stage strategy: first an indexed prefilter via find_by_plate_exact and find_by_plate_folded (cheap, database-side), then exact scoring of the returned candidates in Python. Never scan all sightings. Return a ranked list of MatchCandidate objects with review_status assigned by threshold: at or above auto-accept -> auto_accepted; between review floor and auto-accept -> pending_review; below floor -> excluded entirely."
+    },
+    {
+      "id": "6.7",
+      "name": "Plate cloning detection",
+      "detail": "Implement detect_plate_conflicts(plate, sightings, topology) which flags when sightings sharing one plate are physically impossible to reconcile (two sightings on distant cameras within a window shorter than the minimum plausible transit). Return a PlateConflict describing the impossible pair. This is the signature of a cloned or misread plate and must be surfaced rather than silently producing a teleporting trajectory."
+    },
+    {
+      "id": "6.8",
+      "name": "Evaluation harness",
+      "detail": "Implement evaluate_plate_matching(dataset, ground_truth) -> MatchingMetrics reporting precision, recall, F1, false-positive count, false-negative count, and a per-failure-mode breakdown (which corruption types caused misses), computed against stage 5's ground truth. Provide scripts/evaluate_matching.py to run this across all committed scenarios and print a comparison table."
+    },
+    {
+      "id": "6.9",
+      "name": "Threshold calibration",
+      "detail": "Using the evaluation harness, sweep the fuzzy distance and confidence thresholds across the committed scenarios and record the resulting precision/recall curve in docs/. Choose defaults that hold precision at or above a documented target (recommend 0.99 on the 'realistic' scenario) and write the chosen values into config/thresholds.yaml with a comment citing the measured numbers. Do not pick thresholds by intuition — pick them from the sweep."
+    }
+  ],
+
+  "tests_substage": {
+    "id": "6.T",
+    "description": "String logic is cheap to test exhaustively — so test it exhaustively, including every documented confusion pair.",
+    "unit_tests": [
+      {
+        "target": "normalize_plate",
+        "cases": [
+          "lowercase input is uppercased",
+          "spaces, hyphens, dots, and slashes are stripped",
+          "leading and trailing whitespace is stripped",
+          "already-normalized input is unchanged (idempotency)",
+          "normalize(normalize(x)) == normalize(x) for all inputs",
+          "empty string returns None",
+          "string of only punctuation returns None",
+          "unicode lookalike characters are transliterated or rejected explicitly, never passed through silently",
+          "regional prefix stripping is off by default and active when configured on"
+        ]
+      },
+      {
+        "target": "fold_ambiguous",
+        "cases": [
+          "every documented confusion pair folds to the same representative — one explicit test case per pair",
+          "characters outside any confusion group are unchanged",
+          "folding is idempotent",
+          "folding preserves string length",
+          "the confusion map loaded from config overrides the default"
+        ]
+      },
+      {
+        "target": "edit distance",
+        "cases": [
+          "identical strings have distance 0",
+          "single substitution has distance 1",
+          "single insertion and single deletion each have distance 1",
+          "adjacent transposition has distance 1 (Damerau behavior, not 2)",
+          "empty vs non-empty equals the length of the non-empty string",
+          "distance is symmetric for the unweighted variant",
+          "max_distance cutoff returns early with a value above the cutoff rather than the true distance, and is documented as such",
+          "weighted variant charges less for an in-confusion-group substitution than for an arbitrary one",
+          "weighted distance never exceeds unweighted distance"
+        ]
+      },
+      {
+        "target": "classify_plate_match",
+        "cases": [
+          "identical plates classify as plate_exact with distance 0",
+          "plates differing only by O/0 classify as plate_fuzzy with folded_equal True",
+          "plates at weighted distance just within the threshold classify as plate_fuzzy",
+          "plates just beyond the threshold classify as no_match",
+          "length delta beyond tolerance short-circuits to no_match even when the edit distance would qualify",
+          "None or empty candidate plate returns no_match without raising"
+        ]
+      },
+      {
+        "target": "score_plate_match",
+        "cases": [
+          "exact match with OCR confidence 1.0 scores at or near 1.0",
+          "score is 0 when OCR confidence is 0 regardless of method",
+          "monotonic in OCR confidence (verified across a sweep)",
+          "monotonically non-increasing in edit distance (verified across a sweep)",
+          "exact match always scores at least as high as a fuzzy match with the same OCR confidence",
+          "output is always within [0,1] for arbitrary inputs"
+        ]
+      },
+      {
+        "target": "find_plate_matches",
+        "cases": [
+          "returns matches ranked by descending score",
+          "assigns auto_accepted above the threshold and pending_review in the review band",
+          "excludes candidates below the review floor entirely",
+          "time_window filter excludes out-of-window sightings",
+          "camera_ids filter excludes other cameras",
+          "no matching sightings returns an empty list, not None",
+          "uses only the indexed prefilter paths — verified by asserting on the fake repository's recorded call log that no full-scan method was invoked"
+        ]
+      },
+      {
+        "target": "detect_plate_conflicts",
+        "cases": [
+          "two sightings on distant cameras within an impossible interval are flagged",
+          "the same two sightings with a plausible interval are not flagged",
+          "sightings on the same camera are never flagged as conflicts",
+          "a three-sighting sequence where only one pair is impossible flags exactly that pair"
+        ]
+      }
+    ],
+    "property_based_tests": [
+      "For any random string s: normalize(s) contains only uppercase alphanumerics or is None.",
+      "For any random pair (a, b): weighted_distance(a,b) <= unweighted_distance(a,b).",
+      "For any plate p and any single confusion-group substitution applied to it: classify returns plate_fuzzy, never no_match, under default thresholds.",
+      "score_plate_match output is in [0,1] for arbitrary generated inputs."
+    ],
+    "integration_tests": [
+      {
+        "target": "evaluation against synthetic ground truth",
+        "cases": [
+          "on the 'clean' scenario, precision and recall are both 1.0",
+          "on the 'realistic' scenario, precision meets the documented target and recall exceeds its documented floor",
+          "on the 'degraded' scenario, precision still meets its target even though recall drops — precision must not collapse under noise",
+          "on the 'hard_negatives' scenario, no decoy vehicle is auto-accepted as the target",
+          "on the 'adversarial' scenario, the cloned plate is reported by detect_plate_conflicts",
+          "metrics are computed against the real ground-truth file, not a re-derived one",
+          "the per-failure-mode breakdown correctly attributes misses to the corruption types recorded in ground truth"
+        ]
+      },
+      {
+        "target": "regression guard",
+        "cases": [
+          "measured metrics on each scenario are asserted against committed baseline values with a small tolerance, so future changes that degrade matching quality fail CI"
+        ]
+      },
+      {
+        "target": "performance",
+        "cases": [
+          "matching a target against a 100,000-sighting dataset completes within a documented budget (marked 'slow')",
+          "query count scales with the number of prefiltered candidates, not with total dataset size"
+        ]
+      }
+    ]
+  },
+
+  "exit_criteria": [
+    "Precision on the 'realistic' scenario meets the documented target and is enforced by a regression test",
+    "No decoy in the 'hard_negatives' scenario is ever auto-accepted",
+    "Thresholds in config are justified by a committed sweep, not chosen by intuition",
+    "Folded plate forms never leak into stored or displayed values",
+    "Candidate search never performs a full table scan"
+  ],
+
+  "deliverables": [
+    "src/multicam_tracker/matching/{__init__,normalize,folding,distance,plate_match,scoring,search,conflicts,evaluation}.py",
+    "scripts/evaluate_matching.py",
+    "config/confusion_map.yaml",
+    "tests/unit/matching/ (one module per source module)",
+    "tests/integration/matching/test_plate_evaluation.py",
+    "tests/integration/matching/baselines/plate_metrics_baseline.json",
+    "docs/PLATE_MATCHING.md including the threshold sweep results and precision/recall curves"
+  ]
+}

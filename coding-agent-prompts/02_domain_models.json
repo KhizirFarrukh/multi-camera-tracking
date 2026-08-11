@@ -1,0 +1,193 @@
+{
+  "stage": 2,
+  "stage_id": "domain_models",
+  "title": "Domain Models and Validation Layer",
+  "inherits": "00_GLOBAL_CONTRACT.json",
+  "depends_on": [1],
+  "estimated_complexity": "low-medium",
+
+  "objective": "Implement every domain entity from the global contract's canonical_data_contracts as strictly-validated Pydantic v2 models, with serialization helpers. These models are the shared vocabulary of the entire system; every later stage consumes them.",
+
+  "context_for_agent": "Do not invent new fields or rename contract fields. If you believe a field is missing, add it and explicitly record the addition in your completion report. Validation here is load-bearing: it is the reason later stages can assume data is well-formed.",
+
+  "tasks": [
+    {
+      "id": "2.1",
+      "name": "Enumerations",
+      "detail": "In src/multicam_tracker/models/enums.py define string enums: ObjectClass (car, truck, bus, motorcycle, unknown), MatchMethod (plate_exact, plate_fuzzy, embedding, manual), ReviewStatus (auto_accepted, pending_review, confirmed, rejected), SourceType (recorded_file, live_stream). All inherit from (str, Enum) so they serialize as plain strings."
+    },
+    {
+      "id": "2.2",
+      "name": "Base model configuration",
+      "detail": "In src/multicam_tracker/models/base.py define a MCTBaseModel(BaseModel) with model_config: extra='forbid', frozen=False, validate_assignment=True, str_strip_whitespace=True, use_enum_values=False. All domain models inherit from it. extra='forbid' is deliberate — it catches typo'd field names at construction time instead of silently dropping data."
+    },
+    {
+      "id": "2.3",
+      "name": "UTC datetime type",
+      "detail": "Define an annotated UtcDatetime type that rejects naive datetimes and normalizes any aware datetime to UTC. Every timestamp field across all models uses this type. Rejection message must state which field was naive."
+    },
+    {
+      "id": "2.4",
+      "name": "Camera and CameraLink models",
+      "detail": "Implement Camera and CameraLink exactly per the contract. Validation: lat in [-90, 90], lon in [-180, 180], heading_degrees in [0, 360) when present, camera_id matches pattern ^[a-z0-9_\\-]+$, min_travel_time_sec >= 0, max_travel_time_sec > min_travel_time_sec (raise with both values in the error), from_camera_id != to_camera_id."
+    },
+    {
+      "id": "2.5",
+      "name": "Sighting model",
+      "detail": "Implement Sighting exactly per the contract. Validation: bbox is exactly 4 ints with x2 > x1 and y2 > y1 and all values >= 0; detection_confidence and plate_confidence in [0,1]; embedding, when present, has length equal to settings.vision.embedding_dim (default 512) and is L2-normalized within tolerance 1e-3 (raise if not, do not silently renormalize); timestamp_utc must equal raw_timestamp + clock_offset_applied_ms (cross-field validator, tolerance 1ms); if plate_text_normalized is set then plate_confidence must also be set. Provide a computed property has_plate and has_embedding."
+    },
+    {
+      "id": "2.6",
+      "name": "Target model",
+      "detail": "Implement Target per the contract. Validation: at least one of plate_query or reference_embeddings must be present (a target with neither is unsearchable — raise ValidationError explaining this); each reference embedding must match the configured dimension and be L2-normalized; label non-empty after stripping."
+    },
+    {
+      "id": "2.7",
+      "name": "MatchCandidate model",
+      "detail": "Implement MatchCandidate per the contract. Validation: match_score in [0,1]; if match_method is plate_exact then plate_edit_distance must be 0; if plate_fuzzy then plate_edit_distance must be >= 1; if embedding then embedding_similarity must be present and in [-1,1]; if manual then review_status must be 'confirmed' or 'rejected'. These invariants prevent inconsistent match records from ever reaching storage."
+    },
+    {
+      "id": "2.8",
+      "name": "TrajectoryHop and Trajectory models",
+      "detail": "Implement both per the contract. Trajectory validation: sightings list must be sorted strictly ascending by timestamp_utc (raise with the index of the first out-of-order element); len(hops) must equal max(0, len(sightings) - 1); hop i must reference sightings[i] and sightings[i+1] by id; start_time_utc and end_time_utc must match the first and last sighting timestamps; overall_confidence in [0,1]. Provide computed properties: duration_sec, camera_sequence (list of camera_ids in order), distinct_camera_count."
+    },
+    {
+      "id": "2.9",
+      "name": "Supporting models",
+      "detail": "Implement TimeWindow (start_utc, end_utc with end > start, plus contains(dt) and overlaps(other) helpers), GeoPoint (lat, lon with a haversine_distance_to(other) method returning meters), and CoverageGap (from_sighting_id, to_sighting_id, elapsed_sec, expected_max_sec, reason) used later by stage 08."
+    },
+    {
+      "id": "2.10",
+      "name": "Serialization helpers",
+      "detail": "Provide to_json_dict() / from_json_dict() helpers ensuring datetimes serialize as ISO-8601 with 'Z' suffix and millisecond precision, embeddings serialize as plain float lists, and enums serialize as their string values. Round-tripping any model must produce an equal model."
+    }
+  ],
+
+  "tests_substage": {
+    "id": "2.T",
+    "description": "Validation logic is only trustworthy if the rejection paths are tested as thoroughly as the acceptance paths. Test both.",
+    "unit_tests": [
+      {
+        "target": "UtcDatetime",
+        "cases": [
+          "aware UTC datetime is accepted unchanged",
+          "aware non-UTC datetime is converted to UTC preserving the instant",
+          "naive datetime is rejected with the field name in the message",
+          "string ISO-8601 input with offset is parsed and normalized"
+        ]
+      },
+      {
+        "target": "Camera / CameraLink",
+        "cases": [
+          "valid camera constructs successfully",
+          "lat above 90 and below -90 are both rejected",
+          "lon above 180 and below -180 are both rejected",
+          "heading of exactly 360 is rejected, 0 and 359.9 accepted",
+          "camera_id with uppercase or spaces is rejected",
+          "link with max_travel_time <= min_travel_time is rejected, error names both values",
+          "self-link (from == to) is rejected",
+          "unknown extra field is rejected due to extra='forbid'"
+        ]
+      },
+      {
+        "target": "Sighting",
+        "cases": [
+          "fully populated valid sighting constructs",
+          "minimal sighting with no plate and no embedding constructs",
+          "bbox with x2 <= x1 rejected; with y2 <= y1 rejected; with negative coordinate rejected; with wrong length rejected",
+          "confidence values of exactly 0.0 and 1.0 accepted; -0.01 and 1.01 rejected",
+          "embedding of wrong dimension rejected with expected vs actual in message",
+          "non-normalized embedding rejected (and NOT silently renormalized)",
+          "embedding exactly at the 1e-3 normalization tolerance boundary accepted",
+          "timestamp_utc inconsistent with raw_timestamp + offset is rejected",
+          "plate_text_normalized set without plate_confidence is rejected",
+          "has_plate and has_embedding computed properties return correct values in all four combinations"
+        ]
+      },
+      {
+        "target": "Target",
+        "cases": [
+          "target with only plate_query is valid",
+          "target with only reference_embeddings is valid",
+          "target with both is valid",
+          "target with neither is rejected with an explanatory message",
+          "empty or whitespace-only label rejected"
+        ]
+      },
+      {
+        "target": "MatchCandidate",
+        "cases": [
+          "plate_exact with edit distance 0 valid; with edit distance 1 rejected",
+          "plate_fuzzy with edit distance 0 rejected; with 1 or 2 valid",
+          "embedding method without embedding_similarity rejected",
+          "embedding_similarity outside [-1,1] rejected",
+          "manual method with review_status 'pending_review' rejected"
+        ]
+      },
+      {
+        "target": "Trajectory / TrajectoryHop",
+        "cases": [
+          "trajectory with 1 sighting and 0 hops is valid",
+          "trajectory with 0 sightings is rejected",
+          "out-of-order sightings rejected, error reports the offending index",
+          "sightings with identical timestamps rejected (strict ascending)",
+          "hop count mismatch rejected",
+          "hop referencing a sighting id not in the sightings list rejected",
+          "start_time_utc / end_time_utc mismatch with first/last sighting rejected",
+          "duration_sec, camera_sequence, and distinct_camera_count computed correctly including the repeated-camera case (same camera seen twice)"
+        ]
+      },
+      {
+        "target": "TimeWindow / GeoPoint",
+        "cases": [
+          "window with end <= start rejected",
+          "contains() is inclusive at start and exclusive at end (document and test the chosen convention)",
+          "overlaps() true for partial overlap, containment, and identical windows; false for adjacent non-overlapping windows",
+          "haversine distance between identical points is 0",
+          "haversine distance between two known reference coordinates matches the expected value within 0.5% tolerance",
+          "haversine handles antimeridian crossing correctly"
+        ]
+      },
+      {
+        "target": "serialization",
+        "cases": [
+          "every model round-trips to_json_dict -> from_json_dict producing an equal object",
+          "datetimes serialize with 'Z' suffix and millisecond precision",
+          "enums serialize as strings not objects",
+          "None-valued optional fields survive the round trip as None"
+        ]
+      }
+    ],
+    "property_based_tests": [
+      "Using hypothesis: any valid Sighting generated by a strategy round-trips through serialization unchanged.",
+      "Using hypothesis: haversine_distance_to is symmetric (a to b equals b to a) and satisfies the triangle inequality for random coordinate triples."
+    ],
+    "integration_tests": [
+      {
+        "target": "models against real fixture data",
+        "cases": [
+          "a representative fixture JSON file of cameras, links, and sightings loads into models without error",
+          "a deliberately malformed fixture file produces a validation error naming the specific bad record"
+        ],
+        "note": "Create these fixture files in tests/fixtures/ — later stages will reuse them."
+      }
+    ]
+  },
+
+  "exit_criteria": [
+    "Every entity in canonical_data_contracts has a corresponding validated model",
+    "No model accepts a naive datetime anywhere",
+    "All invariants listed in the tasks are enforced at construction time, not deferred to callers",
+    "Round-trip serialization is lossless for all models",
+    "mypy strict passes; coverage on models/ is at or above 95%"
+  ],
+
+  "deliverables": [
+    "src/multicam_tracker/models/{__init__,base,enums,camera,sighting,target,match,trajectory,geo,timewindow}.py",
+    "tests/unit/models/ (one test module per model module)",
+    "tests/fixtures/sample_cameras.json",
+    "tests/fixtures/sample_links.json",
+    "tests/fixtures/sample_sightings.json",
+    "tests/fixtures/malformed_sightings.json"
+  ]
+}

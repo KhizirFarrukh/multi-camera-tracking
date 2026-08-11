@@ -1,0 +1,196 @@
+{
+  "stage": 15,
+  "stage_id": "live_processing",
+  "title": "Live Stream Processing and Real-Time Alerting",
+  "inherits": "00_GLOBAL_CONTRACT.json",
+  "depends_on": [1, 8, 9, 10, 14],
+  "estimated_complexity": "high",
+
+  "objective": "Run the pipeline continuously against live camera streams, incrementally extending trajectories as new sightings arrive, and alerting when an active target is detected — with the latency, degradation, and continuous-operation behavior that live use demands.",
+
+  "context_for_agent": "Live processing differs from batch in three ways that shape every design decision: it never ends (so leaks and unbounded growth are fatal rather than tolerable), it cannot fall behind (so it must shed load rather than queue indefinitely), and its output is actionable immediately (so alert latency and false-positive rate matter far more than in offline analysis). Reuse stage 14's pipeline rather than forking it; the differences belong in the runner, not the stages.",
+
+  "tasks": [
+    {
+      "id": "15.1",
+      "name": "Live runner",
+      "detail": "Implement LiveRunner consuming from LiveStreamSource instances and driving the same pipeline stages as stage 14. Per-camera independent operation: one camera reconnecting or failing must not interrupt any other. Support adding and removing cameras at runtime without restarting the process."
+    },
+    {
+      "id": "15.2",
+      "name": "Load shedding and adaptive degradation",
+      "detail": "Define an explicit degradation ladder applied under sustained load, in order: (1) reduce sampling rate toward a configured floor; (2) enable or tighten the motion prefilter; (3) skip embedding extraction, keeping plate reading; (4) reduce OCR frames-per-track to one; (5) drop frames outright. Each level is logged and exposed as a metric. Recovery back up the ladder is hysteretic — require sustained headroom before re-enabling, so the system does not oscillate. Never let a queue grow without bound."
+    },
+    {
+      "id": "15.3",
+      "name": "Active target watchlist",
+      "detail": "Maintain an in-memory watchlist of active targets, refreshed from the database at a configured interval and invalidated immediately on change. Every new sighting is matched against the watchlist synchronously in the hot path, so watchlist matching must be cheap: index by normalized and folded plate for O(1) lookup, and only run embedding comparison for the subset of targets that have reference embeddings."
+    },
+    {
+      "id": "15.4",
+      "name": "Alert generation",
+      "detail": "Define an Alert model: alert_id, target_id, triggering sighting, match confidence, camera and location, detection timestamp, alert generation timestamp, and end-to-end latency. Alerting rules from config: minimum confidence, deduplication window (do not re-alert for the same target on the same camera within N seconds), and escalation when a target is seen on several cameras confirming a genuine track rather than a one-off read."
+    },
+    {
+      "id": "15.5",
+      "name": "Alert delivery",
+      "detail": "Implement pluggable delivery channels: webhook (POST with retry and exponential backoff), server-sent events for the UI, log sink, and a stub for email or SMS. Delivery is asynchronous and must never block the pipeline. Failed deliveries retry with a bounded budget and are recorded as undelivered rather than silently lost."
+    },
+    {
+      "id": "15.6",
+      "name": "Live trajectory extension",
+      "detail": "On each accepted match, call stage 8's extend_trajectory to update the target's live trajectory incrementally. Handle out-of-order arrival using stage 9's watermark policy. Persist trajectory updates at a configured interval rather than on every sighting, to bound database write load, while ensuring an in-flight trajectory is never lost on shutdown."
+    },
+    {
+      "id": "15.7",
+      "name": "Latency budget and measurement",
+      "detail": "Define and enforce an end-to-end latency budget from frame capture to alert delivery, measured per stage. Emit a warning metric when the budget is exceeded. Report p50, p95, and p99 latency continuously — average latency hides exactly the tail behavior that matters for a live alerting system."
+    },
+    {
+      "id": "15.8",
+      "name": "Continuous operation hygiene",
+      "detail": "Address everything that only breaks after days of uptime: bounded caches with eviction, periodic cleanup of terminated tracks, log rotation, connection pool recycling, and explicit memory-growth monitoring with an alert threshold. Include a long-running soak test in the suite. Track dictionaries and per-camera state are the usual culprits — bound them explicitly."
+    },
+    {
+      "id": "15.9",
+      "name": "Health and readiness",
+      "detail": "Expose per-camera health (connected, last frame time, current fps, degradation level, reconnect count) and overall service health with readiness and liveness semantics suitable for a process supervisor or orchestrator. A camera silently dead for an hour is a serious failure that must be visible, not inferred."
+    },
+    {
+      "id": "15.10",
+      "name": "Graceful shutdown",
+      "detail": "On shutdown signal: stop accepting new frames, drain in-flight work within a configured timeout, persist all trajectories and checkpoints, flush pending alerts, and close all sources cleanly. Restarting must resume without data loss or duplication."
+    }
+  ],
+
+  "tests_substage": {
+    "id": "15.T",
+    "description": "Test with synthetic live sources and controllable fault injection. Every test must be deterministic — use injected clocks and event-driven synchronization, never sleeps.",
+    "unit_tests": [
+      {
+        "target": "load shedding ladder",
+        "cases": [
+          "sustained load triggers degradation levels in the documented order",
+          "each level is logged and reflected in the exposed metric",
+          "recovery requires sustained headroom and does not oscillate under fluctuating load",
+          "the sampling rate floor is never breached",
+          "at maximum degradation, frames are dropped and counted rather than queued",
+          "queue depth remains bounded under load exceeding capacity — the defining property"
+        ]
+      },
+      {
+        "target": "watchlist",
+        "cases": [
+          "plate lookup is O(1) — verified by asserting constant lookup cost across watchlist sizes of 10 and 10,000",
+          "an added target is matchable immediately after refresh",
+          "a deactivated target stops matching",
+          "folded plate lookup catches ambiguity-substituted reads",
+          "embedding comparison runs only for targets that have reference embeddings",
+          "an empty watchlist adds negligible hot-path cost"
+        ]
+      },
+      {
+        "target": "alert rules",
+        "cases": [
+          "a match above the minimum confidence generates an alert",
+          "a match below it generates none",
+          "a repeat match on the same camera within the dedup window generates no second alert",
+          "a repeat match after the window generates a new alert",
+          "a match on a different camera within the window generates an alert (dedup is per camera, per the documented rule)",
+          "escalation triggers after the configured number of confirming cameras",
+          "the alert records end-to-end latency correctly using an injected clock"
+        ]
+      },
+      {
+        "target": "alert delivery",
+        "cases": [
+          "webhook delivery posts the expected payload",
+          "a failed webhook retries with the configured backoff",
+          "retry budget exhaustion marks the alert undelivered and records it — never silently dropped",
+          "delivery failure does not block or slow the pipeline (asserted by measuring pipeline throughput during a failing delivery)",
+          "SSE clients receive alerts and a slow client does not stall others",
+          "multiple channels each receive the alert independently"
+        ]
+      },
+      {
+        "target": "live trajectory extension",
+        "cases": [
+          "a new plausible sighting extends the live trajectory",
+          "an implausible sighting is rejected and recorded",
+          "an out-of-order sighting within the watermark triggers correct reordering",
+          "trajectory persistence occurs at the configured interval, not on every sighting",
+          "an in-flight trajectory is persisted on shutdown and not lost"
+        ]
+      },
+      {
+        "target": "graceful shutdown",
+        "cases": [
+          "in-flight work drains within the timeout",
+          "work exceeding the timeout is abandoned per the documented policy and reported",
+          "all trajectories and checkpoints are persisted before exit",
+          "pending alerts are flushed",
+          "all sources are closed and no resources leak",
+          "restart after shutdown resumes with neither loss nor duplication"
+        ]
+      }
+    ],
+    "integration_tests": [
+      {
+        "target": "end-to-end live detection and alerting",
+        "cases": [
+          "a target vehicle appearing in a synthetic live stream generates an alert with correct target, camera, and confidence",
+          "measured end-to-end latency falls within the configured budget",
+          "a target crossing three cameras produces an incrementally extended trajectory matching the batch-processed result for the same footage — the key equivalence property between live and batch paths",
+          "a non-target vehicle generates no alert"
+        ]
+      },
+      {
+        "target": "fault tolerance",
+        "cases": [
+          "a camera disconnecting and reconnecting resumes processing and is reflected in health status",
+          "one camera failing permanently leaves the others processing normally",
+          "database unavailability buffers sightings up to the configured bound and flushes on recovery",
+          "buffer overflow during a prolonged outage sheds load per policy and reports the loss explicitly rather than silently",
+          "a webhook endpoint being down does not degrade detection"
+        ]
+      },
+      {
+        "target": "soak test",
+        "cases": [
+          "a multi-hour synthetic run (accelerated where possible) shows no memory growth beyond the configured threshold",
+          "no file descriptor growth",
+          "track state dictionaries remain bounded",
+          "latency percentiles remain stable throughout with no gradual degradation",
+          "marked 'slow'; run nightly rather than on every commit"
+        ]
+      },
+      {
+        "target": "runtime camera management",
+        "cases": [
+          "adding a camera at runtime begins processing without restart",
+          "removing a camera stops its processing and releases its resources",
+          "removing a camera mid-track persists or discards the in-flight track per the documented policy"
+        ]
+      }
+    ]
+  },
+
+  "exit_criteria": [
+    "Queue depth and memory remain bounded under sustained overload",
+    "The soak test shows no resource growth over an extended run",
+    "Live and batch processing of identical footage produce equivalent trajectories",
+    "Alert latency percentiles are measured and within budget",
+    "Shutdown and restart lose no data and duplicate nothing"
+  ],
+
+  "deliverables": [
+    "src/multicam_tracker/live/{__init__,runner,degradation,watchlist,alerts,delivery,trajectory_live,latency,health,shutdown}.py",
+    "scripts/run_live.py",
+    "tests/unit/live/ (one module per source module)",
+    "tests/integration/live/test_live_alerting_e2e.py",
+    "tests/integration/live/test_live_fault_tolerance.py",
+    "tests/integration/live/test_live_batch_equivalence.py",
+    "tests/integration/live/test_soak.py",
+    "docs/LIVE_PROCESSING.md documenting the degradation ladder and latency budget"
+  ]
+}

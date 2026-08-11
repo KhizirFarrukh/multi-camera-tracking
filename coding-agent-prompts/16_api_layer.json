@@ -1,0 +1,201 @@
+{
+  "stage": 16,
+  "stage_id": "api_layer",
+  "title": "REST API, Authentication, and Access Control",
+  "inherits": "00_GLOBAL_CONTRACT.json",
+  "depends_on": [1, 2, 3, 14, 15],
+  "estimated_complexity": "medium-high",
+
+  "objective": "Expose the system's capabilities over an authenticated HTTP API with per-actor authorization and complete audit logging, so the UI and any external integration have a single well-defined, accountable interface.",
+
+  "context_for_agent": "This API operates on surveillance data and vehicle identifiers, so authentication and audit logging are functional requirements rather than hardening to be added later. Every search and every match confirmation must be attributable to a specific actor. Build authorization in from the first endpoint — retrofitting it reliably across an existing surface is far harder than it looks.",
+
+  "tasks": [
+    {
+      "id": "16.1",
+      "name": "API schemas",
+      "detail": "Define request and response Pydantic schemas separate from domain models. Never expose internal representations directly: responses omit internal ids where unnecessary, embeddings are never returned in full (return only dimension and model version), and every response carrying a match or trajectory includes explicit confidence and any integrity caveats. Version the API under /api/v1/."
+    },
+    {
+      "id": "16.2",
+      "name": "Authentication",
+      "detail": "Implement API key authentication for service clients and JWT session authentication for interactive users, both pluggable behind a single dependency. Every authenticated request resolves to an Actor (id, display name, role, permission set) available to handlers and the audit log. Unauthenticated requests to protected endpoints return 401 with no information leakage about whether a resource exists."
+    },
+    {
+      "id": "16.3",
+      "name": "Authorization model",
+      "detail": "Define roles: viewer (read trajectories and sightings), operator (create targets, run searches, confirm matches), admin (manage cameras, topology, jobs, users), and auditor (read the audit log, no operational access). Enforce per-endpoint permission requirements declaratively. Optionally support camera-scoped restrictions so an actor may only query cameras they are authorized for — this must be enforced in the query layer, not only in response filtering, so unauthorized data is never retrieved at all."
+    },
+    {
+      "id": "16.4",
+      "name": "Core endpoints",
+      "detail": "Implement: POST /targets (create), GET /targets, GET /targets/{id}, PATCH /targets/{id} (deactivate); POST /search (run search_target, returning a trajectory with alternatives, gaps, caveats, and explanations); GET /trajectories/{id}; GET /sightings with filters for camera, time window, plate, and pagination; GET /sightings/{id}/thumbnail (authorized image serving); GET /cameras and topology read endpoints; POST /jobs, GET /jobs/{id}, POST /jobs/{id}/cancel; GET /alerts and the SSE stream; POST /matches/{id}/confirm and /reject for human review."
+    },
+    {
+      "id": "16.5",
+      "name": "Audit logging",
+      "detail": "Every request that reads identifiable data or changes state writes an append-only audit record: actor, timestamp, endpoint, parameters (with a documented redaction policy), result summary, and outcome. Audit writes must be durable before the response is returned for state-changing operations. The audit log is queryable only by the auditor role and is never deletable through the API."
+    },
+    {
+      "id": "16.6",
+      "name": "Pagination, filtering, and limits",
+      "detail": "Implement cursor-based pagination (not offset — sighting tables grow large and offset pagination degrades and skips rows under concurrent inserts). Enforce a maximum page size, a maximum queryable time range, and a default range when none is supplied, so an unbounded query cannot be issued accidentally."
+    },
+    {
+      "id": "16.7",
+      "name": "Rate limiting and abuse protection",
+      "detail": "Implement per-actor rate limits with distinct budgets for cheap reads and expensive searches. Return 429 with Retry-After. Additionally cap concurrent expensive searches per actor so one client cannot monopolize the system."
+    },
+    {
+      "id": "16.8",
+      "name": "Error handling",
+      "detail": "Map the project exception hierarchy to appropriate HTTP status codes with a consistent error envelope (code, message, details, request_id). Never leak stack traces, SQL, or internal paths to clients. Log the full detail server-side keyed by request_id so support can correlate a user-reported error with the internal trace."
+    },
+    {
+      "id": "16.9",
+      "name": "Async job handling",
+      "detail": "Searches over large ranges and processing jobs may exceed a reasonable request timeout. Implement a job-submission pattern: return 202 with a job id and poll or SSE endpoints for completion. Define a documented threshold above which a search is automatically promoted to asynchronous."
+    },
+    {
+      "id": "16.10",
+      "name": "OpenAPI documentation",
+      "detail": "Ensure generated OpenAPI documentation is complete: every endpoint documented with descriptions, example requests and responses, error responses, and required permissions. Serve interactive docs gated behind authentication in production configurations."
+    }
+  ],
+
+  "tests_substage": {
+    "id": "16.T",
+    "description": "Test authorization exhaustively — every endpoint against every role. This matrix is tedious to write and is exactly where access-control bugs hide.",
+    "unit_tests": [
+      {
+        "target": "schemas",
+        "cases": [
+          "response schemas never include raw embedding vectors — asserted across every response model",
+          "trajectory responses always include confidence and caveat fields",
+          "request validation rejects malformed input with 422 and a field-level message",
+          "an unknown extra field in a request body is rejected",
+          "datetime fields require timezone-aware values and reject naive ones"
+        ]
+      },
+      {
+        "target": "authentication",
+        "cases": [
+          "a valid API key authenticates and resolves the correct actor",
+          "an invalid API key returns 401",
+          "a missing credential returns 401",
+          "an expired JWT returns 401",
+          "a JWT with an invalid signature returns 401",
+          "a 401 response body reveals nothing about resource existence",
+          "the resolved actor is available to the handler and audit log"
+        ]
+      },
+      {
+        "target": "authorization matrix",
+        "cases": [
+          "for EVERY endpoint, each role is tested for allow or deny per the documented matrix",
+          "viewer cannot create a target (403)",
+          "operator cannot modify the topology (403)",
+          "auditor cannot run a search (403)",
+          "admin can access all operational endpoints",
+          "camera-scoped restriction excludes unauthorized cameras from results",
+          "camera-scoped restriction is enforced in the query, verified by asserting the repository was never asked for unauthorized cameras",
+          "403 is returned for permission denial and 404 for a genuinely missing resource, consistently"
+        ]
+      },
+      {
+        "target": "pagination",
+        "cases": [
+          "cursor pagination returns each record exactly once across pages",
+          "records inserted during pagination do not cause skips or duplicates of existing records",
+          "page size above the maximum is clamped, not rejected — document the choice",
+          "an invalid cursor returns 400 with a clear message",
+          "the final page returns an empty next cursor",
+          "a query without a time range applies the documented default"
+        ]
+      },
+      {
+        "target": "rate limiting",
+        "cases": [
+          "requests within the budget succeed",
+          "exceeding the budget returns 429 with Retry-After",
+          "the budget refills over time using an injected clock",
+          "read and search budgets are tracked independently",
+          "concurrent expensive searches beyond the cap are rejected or queued per the documented policy",
+          "limits are per actor and one actor's usage does not affect another's"
+        ]
+      },
+      {
+        "target": "error handling",
+        "cases": [
+          "each project exception maps to its documented status code",
+          "no response body contains a stack trace, SQL, or filesystem path",
+          "every error response includes a request_id",
+          "the request_id in the response matches the server-side log entry",
+          "an unhandled exception returns 500 with a generic message and is logged in full"
+        ]
+      }
+    ],
+    "integration_tests": [
+      {
+        "target": "audit logging",
+        "cases": [
+          "every state-changing endpoint writes an audit record",
+          "every identifiable-data read writes an audit record",
+          "the record contains the correct actor, endpoint, parameters, and outcome",
+          "the audit write is durable before the response returns for state-changing operations — verified by simulating a crash after response and confirming the record persists",
+          "only the auditor role can read the audit log",
+          "no API path can delete or modify audit records",
+          "the redaction policy is applied to sensitive parameters"
+        ]
+      },
+      {
+        "target": "end-to-end API workflows",
+        "cases": [
+          "create a target, run a search, and retrieve the resulting trajectory through the API against processed sample data",
+          "the returned trajectory matches the result of calling search_target directly",
+          "confirm a pending match and verify the trajectory updates accordingly",
+          "reject a pending match and verify it is excluded",
+          "thumbnails are served only to authorized actors and 403 otherwise",
+          "the SSE alert stream delivers alerts generated by the live runner"
+        ]
+      },
+      {
+        "target": "async job handling",
+        "cases": [
+          "a search exceeding the threshold returns 202 with a job id",
+          "polling reports progress and eventually completion with the result",
+          "a failed async job reports the failure with a usable message",
+          "cancelling an in-flight job stops it and reports cancelled status"
+        ]
+      },
+      {
+        "target": "OpenAPI completeness",
+        "cases": [
+          "the generated spec validates against the OpenAPI schema",
+          "every route is present in the spec",
+          "every route documents its error responses and required permissions",
+          "example payloads in the spec validate against their own schemas"
+        ]
+      }
+    ]
+  },
+
+  "exit_criteria": [
+    "The full endpoint-by-role authorization matrix is tested and passing",
+    "Every identifiable-data access and state change is audited durably",
+    "No unauthenticated access to any data endpoint is possible",
+    "Cursor pagination is correct under concurrent inserts",
+    "No internal detail leaks in any error response"
+  ],
+
+  "deliverables": [
+    "src/multicam_tracker/api/{__init__,app,schemas,auth,permissions,audit,pagination,ratelimit,errors,jobs}.py",
+    "src/multicam_tracker/api/routes/{targets,search,trajectories,sightings,cameras,jobs,alerts,matches,audit}.py",
+    "tests/unit/api/ (one module per source module)",
+    "tests/integration/api/test_authorization_matrix.py",
+    "tests/integration/api/test_audit_logging.py",
+    "tests/integration/api/test_api_workflows.py",
+    "tests/integration/api/test_openapi.py",
+    "docs/API.md including the full permission matrix"
+  ]
+}

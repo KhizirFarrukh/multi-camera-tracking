@@ -1,0 +1,202 @@
+{
+  "stage": 12,
+  "stage_id": "plate_detection_ocr",
+  "title": "License Plate Detection, OCR, and Multi-Frame Read Fusion",
+  "inherits": "00_GLOBAL_CONTRACT.json",
+  "depends_on": [1, 2, 6, 10, 11],
+  "estimated_complexity": "high",
+
+  "objective": "Extract the plate text from a tracked vehicle by locating the plate within the vehicle crop, reading it with OCR across multiple frames of the same track, and fusing those independent reads into one high-confidence result with calibrated confidence.",
+
+  "context_for_agent": "This is the fiddliest stage in the project and the one most affected by real-world conditions. The decisive design choice is multi-frame fusion: a single frame's read is unreliable, but ten reads of the same plate from one track can be combined into something far better than any individual read. Build fusion as a first-class component, not an afterthought. Confidence calibration matters as much as accuracy — stage 6's thresholds are only meaningful if the confidence numbers mean something.",
+
+  "tasks": [
+    {
+      "id": "12.1",
+      "name": "Plate detector interface and implementation",
+      "detail": "Define a PlateDetector protocol: detect_plate(vehicle_crop) -> PlateRegion | None with bbox (in vehicle-crop coordinates plus a conversion to original frame coordinates), confidence, and estimated corner points for rectification. Implement a YOLO-based plate detector with lazy weight loading, plus a FakePlateDetector for deterministic testing. Search only within the vehicle bbox rather than the whole frame — this both speeds detection and suppresses false positives from signage."
+    },
+    {
+      "id": "12.2",
+      "name": "Plate rectification and preprocessing",
+      "detail": "Implement a preprocessing chain applied to the plate crop before OCR: perspective correction via a four-point transform from the detected corners (plates are almost never viewed head-on and skew is a dominant OCR error source), upscaling small crops to a minimum height, grayscale conversion, contrast normalization (CLAHE), optional denoising, and optional binarization. Every step is independently toggleable and the chain order is configurable, so its effect can be measured rather than assumed."
+    },
+    {
+      "id": "12.3",
+      "name": "OCR interface and implementation",
+      "detail": "Define an OcrEngine protocol: read_plate(plate_image) -> OcrResult with text, per-character confidences, overall confidence, and the engine identifier. Implement a PaddleOCR-backed engine configured for the plate character set (uppercase alphanumeric, no lowercase, no punctuation) — restricting the character set is one of the single highest-value accuracy improvements available. Provide a FakeOcrEngine returning scripted results, and structure the code so an alternative engine can be added without touching callers."
+    },
+    {
+      "id": "12.4",
+      "name": "Per-character confidence handling",
+      "detail": "Preserve per-character confidences rather than collapsing to a single number. They enable fusion to combine reads character-by-character and let the UI highlight which characters are uncertain. Where an engine does not expose them, synthesize a documented approximation and flag the result as having approximate character confidences."
+    },
+    {
+      "id": "12.5",
+      "name": "Multi-frame read fusion",
+      "detail": "Implement fuse_reads(list[OcrResult]) -> FusedPlateResult, the core of this stage. Approach: normalize each read via stage 6's normalizer; align reads of differing lengths (choose the modal length, then align by best edit-distance alignment); for each character position, take a confidence-weighted vote across reads, optionally weighting by that frame's best-frame rank from stage 11; produce the fused string plus per-position agreement ratios; compute overall confidence from character-level agreement and vote strength. Handle: total disagreement (return the single highest-confidence read and flag low agreement), a single read (pass through unchanged), and zero reads (return None)."
+    },
+    {
+      "id": "12.6",
+      "name": "Regional plate format validation",
+      "detail": "Support optional configurable plate format patterns (regex per region, e.g. three letters then four digits). A read matching a known format gets a configurable confidence boost; a read violating every known format is penalized and flagged. This must remain optional and default to permissive — an over-strict format filter silently discards legitimate out-of-region plates, which is a worse failure than a low-confidence read."
+    },
+    {
+      "id": "12.7",
+      "name": "Confidence calibration",
+      "detail": "Raw OCR confidences are typically poorly calibrated (models are overconfident). Implement a calibration mapping (isotonic regression or Platt scaling) fitted on a labeled validation set, converting raw scores into calibrated probabilities of a correct read. Provide scripts/calibrate_ocr.py, commit the fitted calibration parameters, and report reliability-diagram data in docs/. Stage 6's thresholds assume calibrated inputs; without this they are guesswork."
+    },
+    {
+      "id": "12.8",
+      "name": "Sighting enrichment",
+      "detail": "Implement enrich_sighting_with_plate(sighting, track, plate_pipeline) which runs the full chain over the track's top-N best frames, fuses the results, and populates plate_text_raw, plate_text_normalized, and plate_confidence. N is configurable, with an early-exit when fused confidence exceeds a threshold and character agreement is unanimous, so easy plates cost less compute than hard ones."
+    },
+    {
+      "id": "12.9",
+      "name": "Failure taxonomy and reporting",
+      "detail": "Classify and count each failure mode distinctly: no plate region detected, plate region too small, OCR returned empty, OCR confidence below floor, format validation failed, and fusion disagreement. These counts drive tuning and feed stage 18's metrics. A single aggregate 'read failure' number tells an operator nothing actionable."
+    },
+    {
+      "id": "12.10",
+      "name": "Evaluation harness",
+      "detail": "Implement evaluation against a labeled plate image set: exact-match accuracy, character error rate, accuracy at each confidence threshold, and per-condition breakdown (angle, distance, illumination, motion blur) where labels support it. Critically, measure single-frame accuracy versus fused multi-frame accuracy on the same tracks to quantify what fusion actually buys — if fusion does not clearly beat the best single read, its complexity is not justified and that finding must be reported honestly."
+    }
+  ],
+
+  "tests_substage": {
+    "id": "12.T",
+    "description": "Fusion logic is pure and must be tested exhaustively with fake OCR results; real-model tests verify integration and are marked so CI can skip them.",
+    "unit_tests": [
+      {
+        "target": "preprocessing chain",
+        "cases": [
+          "four-point perspective transform on a synthetically skewed image recovers the original within tolerance",
+          "upscaling raises a below-minimum-height crop to at least the minimum",
+          "an already-large crop is not upscaled",
+          "each step can be individually disabled and its effect is absent from the output",
+          "chain order configuration is respected",
+          "degenerate input (1x1 image, zero-area crop) is handled without raising",
+          "corner points that are collinear or degenerate fall back to the plain bbox crop"
+        ]
+      },
+      {
+        "target": "fuse_reads (critical)",
+        "cases": [
+          "a single read passes through with its text unchanged",
+          "zero reads returns None",
+          "identical reads produce that text with confidence at or above the maximum individual confidence and unanimous agreement ratios",
+          "a majority vote resolves correctly: three reads of 'ABC123' and one of 'ABC128' fuse to 'ABC123'",
+          "confidence weighting overrides raw count: one very high-confidence read outvotes two low-confidence disagreeing reads (constructed case with documented weights)",
+          "reads of differing lengths align correctly and the modal length wins",
+          "total disagreement returns the highest-confidence read and flags low agreement",
+          "per-position agreement ratios are correct for a constructed mixed case",
+          "best-frame rank weighting measurably shifts the outcome when enabled",
+          "fusion is deterministic and order-independent — shuffling the input reads produces identical output",
+          "reads containing None text are excluded without raising",
+          "fused confidence never exceeds 1.0 and never falls below 0.0"
+        ]
+      },
+      {
+        "target": "format validation",
+        "cases": [
+          "a read matching a configured pattern receives the configured boost",
+          "a read matching no pattern is penalized and flagged",
+          "with validation disabled, no boost or penalty is applied",
+          "an out-of-region plate is still returned (never silently discarded) — explicitly asserted",
+          "an invalid regex in configuration raises ConfigurationError at load time, not at read time"
+        ]
+      },
+      {
+        "target": "confidence calibration",
+        "cases": [
+          "the calibration mapping is monotonic — higher raw confidence never maps to lower calibrated confidence",
+          "calibrated outputs lie within [0,1] for all raw inputs including 0 and 1",
+          "an identity calibration leaves values unchanged",
+          "loading committed calibration parameters reproduces the fitted mapping exactly"
+        ]
+      },
+      {
+        "target": "failure taxonomy",
+        "cases": [
+          "each of the six failure modes is triggered by a constructed input and counted under the correct category",
+          "a successful read increments no failure counter",
+          "counters are exposed in the expected metrics format"
+        ]
+      },
+      {
+        "target": "sighting enrichment",
+        "cases": [
+          "a successful read populates all three plate fields consistently",
+          "a failed read leaves plate fields None and the sighting still validates",
+          "early exit triggers when fused confidence and agreement exceed thresholds — verified by asserting the OCR engine call count",
+          "no early exit occurs for a difficult track and all N frames are attempted",
+          "the enriched sighting passes the stage 2 validators, including the rule that normalized text requires a confidence value"
+        ]
+      }
+    ],
+    "property_based_tests": [
+      "For arbitrary sets of identical reads, the fused text equals that read exactly.",
+      "For arbitrary read sets, the fused string length equals the modal input length.",
+      "Fusion output is invariant to input ordering across randomized permutations."
+    ],
+    "integration_tests": [
+      {
+        "target": "plate detector and OCR with real models",
+        "cases": [
+          "the plate region is located in committed sample vehicle crops with visible plates",
+          "no plate region is returned for a crop with no plate, without raising",
+          "OCR reads a clear frontal plate correctly on the committed sample",
+          "the character set restriction prevents lowercase or punctuation in any output",
+          "a heavily blurred crop yields low confidence rather than a confident wrong answer — the confidence must reflect the difficulty",
+          "weights load lazily; a missing weights file raises VisionError naming the path"
+        ],
+        "note": "Mark 'requires_models'. Use a small committed labeled set."
+      },
+      {
+        "target": "fusion benefit measurement",
+        "cases": [
+          "on the labeled evaluation set, fused multi-frame accuracy is measured against best-single-frame accuracy and the difference is reported",
+          "the measured improvement is asserted against a committed baseline so regressions fail CI",
+          "character error rate is reported for both and included in the docs output"
+        ]
+      },
+      {
+        "target": "full pipeline on sample media",
+        "cases": [
+          "a sample clip runs end to end from frames through detection, tracking, plate reading, and enrichment, producing sightings with populated plate fields",
+          "results are deterministic across two identical runs",
+          "the per-failure-mode counts are populated and sum to the total failure count",
+          "processing time per track is recorded and within a documented budget (marked 'slow')"
+        ]
+      },
+      {
+        "target": "integration with stage 6 matching",
+        "cases": [
+          "plates read by this stage feed into find_plate_matches and match the correct ground-truth vehicle on the labeled set",
+          "calibrated confidences interact correctly with stage 6's auto-accept threshold — verify the auto-accept rate on the labeled set matches the intended operating point"
+        ]
+      }
+    ]
+  },
+
+  "exit_criteria": [
+    "Multi-frame fusion is measured against single-frame reads and the result is documented honestly, whatever it shows",
+    "OCR confidences are calibrated and the calibration is committed and reproducible",
+    "All six failure modes are separately counted",
+    "Out-of-region plates are never silently discarded by format validation",
+    "Fusion is fully deterministic and order-independent"
+  ],
+
+  "deliverables": [
+    "src/multicam_tracker/vision/{plate_detector,plate_preprocess,ocr_protocol,paddle_ocr,fake_ocr,fusion,formats,calibration,enrichment,failures}.py",
+    "scripts/calibrate_ocr.py", "scripts/evaluate_ocr.py",
+    "config/plate_formats.yaml", "config/ocr_calibration.json",
+    "tests/unit/vision/test_fusion.py (exhaustive)",
+    "tests/unit/vision/ (remaining modules)",
+    "tests/integration/vision/test_ocr_models.py",
+    "tests/integration/vision/test_fusion_benefit.py",
+    "tests/integration/vision/baselines/ocr_metrics_baseline.json",
+    "tests/fixtures/plates/ (labeled plate crops across conditions)",
+    "docs/PLATE_OCR.md with accuracy tables, reliability diagrams, and the fusion benefit analysis"
+  ]
+}

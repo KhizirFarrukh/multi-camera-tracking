@@ -1,0 +1,200 @@
+{
+  "stage": 19,
+  "stage_id": "observability_and_governance",
+  "title": "Observability, Metrics, Data Retention, and Governance Controls",
+  "inherits": "00_GLOBAL_CONTRACT.json",
+  "depends_on": [1, 3, 14, 15, 16, 18],
+  "estimated_complexity": "medium",
+
+  "objective": "Make the running system legible and accountable: metrics and tracing for every stage, health monitoring that catches silent failures, enforced data retention, and the governance controls that a system processing surveillance data requires in order to be operated responsibly.",
+
+  "context_for_agent": "Two distinct failure classes are addressed here. The operational one is silent degradation — a camera that stopped producing sightings three days ago, an OCR accuracy that drifted after a lens got dirty. The governance one is unaccountable use — data kept indefinitely, searches nobody can review. Both are invisible without deliberate instrumentation, and both are cheaper to build now than to retrofit.",
+
+  "tasks": [
+    {
+      "id": "19.1",
+      "name": "Metrics collection",
+      "detail": "Instrument with Prometheus-compatible metrics: pipeline throughput (frames and sightings per second per camera), per-stage latency histograms, detection counts by class, plate read outcomes by the stage 12 failure taxonomy, match counts by method and review status, alert counts and end-to-end latency percentiles, queue depths, error counts by type and scope, and resource usage. Expose a /metrics endpoint. Every metric carries camera_id where applicable, since aggregate numbers hide single-camera failures."
+    },
+    {
+      "id": "19.2",
+      "name": "Distributed tracing",
+      "detail": "Implement OpenTelemetry tracing across the pipeline so a single frame's journey through decode, detect, track, read, embed, and persist is a connected trace. Propagate the correlation_id from stage 1 as the trace id. Trace API requests through to the repository calls they trigger. Sampling is configurable — trace everything in development, sample in production."
+    },
+    {
+      "id": "19.3",
+      "name": "Health monitoring and silent-failure detection",
+      "detail": "Implement checks specifically targeting failures that produce no error: a camera producing zero sightings for longer than its historical baseline suggests it should; plate read success rate dropping significantly against its trailing baseline (dirty lens, changed lighting, camera knocked askew); detection counts falling outside expected diurnal patterns; embedding similarity distributions shifting (model or scene drift); and database or disk approaching capacity. Each produces a distinct actionable alert naming the likely cause. A camera that is connected and decoding but seeing nothing is the failure mode that goes unnoticed longest."
+    },
+    {
+      "id": "19.4",
+      "name": "Quality dashboards",
+      "detail": "Provide dashboard definitions (Grafana JSON) covering: system health by camera, pipeline throughput and latency, detection and OCR quality trends, matching and review statistics, and alert volume with confidence distribution. Include a data-quality view showing per-camera plate read rates over time, which is the single most diagnostic view for spotting a degraded camera."
+    },
+    {
+      "id": "19.5",
+      "name": "Data retention enforcement",
+      "detail": "Implement a scheduled purge job enforcing the configured TTL for sightings, thumbnails, and audit records (audit typically retained longer — make each independently configurable). The job deletes database rows and their thumbnail files together, is resumable, batched to avoid long-running transactions, and reports what it deleted. Support a legal-hold mechanism exempting specified targets or time ranges from purging, with holds themselves audited. Retention that is configured but not enforced is the same as no retention policy at all — this job must be verified running, not merely present."
+    },
+    {
+      "id": "19.6",
+      "name": "Retention verification",
+      "detail": "Implement a compliance check reporting whether any data exists beyond its TTL, when the purge job last ran successfully, and any orphaned thumbnails whose database rows are gone (or the reverse). Surface as both a metric and a report, so retention failure is alertable rather than discovered during an audit."
+    },
+    {
+      "id": "19.7",
+      "name": "Audit log analysis",
+      "detail": "Provide tooling over stage 16's audit log: search by actor, target, time range, and endpoint; per-actor activity summaries; and detection of unusual patterns (a sharp increase in searches by one actor, repeated searches of the same plate by different actors, searches outside normal hours). Provide scripts/audit_report.py generating a period report for review. The audit log's value is realized only when someone actually reads it — make that easy."
+    },
+    {
+      "id": "19.8",
+      "name": "Configuration and model provenance",
+      "detail": "Record which configuration snapshot, threshold set, and model versions produced every sighting and trajectory, and expose a lookup answering 'what produced this result?' for any stored record. When output may inform consequential decisions, being unable to reconstruct the conditions that generated it is a serious gap."
+    },
+    {
+      "id": "19.9",
+      "name": "Operational runbooks",
+      "detail": "Write runbooks for: a camera going offline, plate read quality degrading, the pipeline falling behind, the database filling, a model upgrade, clock drift detection, and responding to a suspected false-positive trajectory. Each states symptoms, diagnostic steps, and remediation. Written now while the design is fresh, these are far more accurate than ones written during an incident."
+    },
+    {
+      "id": "19.10",
+      "name": "Governance documentation",
+      "detail": "Document the controls the system implements and their limits: what data is collected and retained, who can access what, what is audited, the confidence semantics and their measured error rates, the known failure modes, and explicitly what the system does not establish (a plate match is evidence a plate was read at a location, not proof of who was driving). Include the measured precision and recall from stages 6, 7, 8, 12, and 13 so operators understand the actual reliability rather than assuming it."
+    }
+  ],
+
+  "tests_substage": {
+    "id": "19.T",
+    "description": "Test that instrumentation is accurate (a wrong metric is worse than none) and that governance controls actually enforce rather than merely report.",
+    "unit_tests": [
+      {
+        "target": "metrics accuracy",
+        "cases": [
+          "counters increment exactly once per event",
+          "histograms record the correct observed values against a known input sequence",
+          "camera_id labels are populated correctly on every labeled metric",
+          "metrics from concurrent workers aggregate correctly without loss",
+          "the /metrics endpoint output parses as valid Prometheus exposition format",
+          "no metric has unbounded label cardinality — asserted by checking label sources against a whitelist"
+        ]
+      },
+      {
+        "target": "tracing",
+        "cases": [
+          "a single frame's processing produces one connected trace spanning all stages",
+          "correlation_id propagates as the trace id",
+          "spans record the correct parent-child relationships",
+          "an API request trace includes its downstream repository spans",
+          "the sampling rate is respected",
+          "tracing being disabled adds no measurable overhead"
+        ]
+      },
+      {
+        "target": "silent-failure detection",
+        "cases": [
+          "a camera with zero sightings past its baseline window triggers the alert",
+          "a camera legitimately quiet at night does not trigger it (diurnal baseline respected)",
+          "plate read rate dropping below the trailing baseline triggers the degradation alert",
+          "a gradual decline crossing the threshold is detected, not just a sudden drop",
+          "an embedding distribution shift is detected",
+          "each threshold is tested at its exact boundary",
+          "a healthy system triggers no alerts across a full simulated day"
+        ]
+      },
+      {
+        "target": "retention enforcement",
+        "cases": [
+          "records older than the TTL are deleted and their thumbnails removed together",
+          "records within the TTL are untouched",
+          "a record exactly at the TTL boundary is handled per the documented convention",
+          "audit records use their own independently configured TTL",
+          "legal-hold records are exempted even when past TTL",
+          "placing and removing a hold is itself audited",
+          "the job is resumable — interrupting and restarting neither skips nor double-deletes",
+          "batching keeps transaction duration below the configured maximum",
+          "the job reports accurate deletion counts by category"
+        ]
+      },
+      {
+        "target": "retention verification",
+        "cases": [
+          "data existing past its TTL is detected and reported",
+          "a compliant dataset reports clean",
+          "orphaned thumbnails (file present, row absent) are detected",
+          "orphaned rows (row present, file absent) are detected",
+          "a stale last-successful-run timestamp is reported as a failure"
+        ]
+      },
+      {
+        "target": "provenance",
+        "cases": [
+          "every sighting resolves to the configuration snapshot and model versions that produced it",
+          "the lookup returns complete provenance for a stored trajectory",
+          "a sighting produced under a since-deleted configuration still resolves its snapshot",
+          "a model version change is reflected in the provenance of subsequently produced records"
+        ]
+      }
+    ],
+    "integration_tests": [
+      {
+        "target": "end-to-end observability",
+        "cases": [
+          "a full pipeline run emits every expected metric with plausible values",
+          "metric values match independently counted ground truth from the run (sightings emitted, frames processed) — the metrics must be correct, not merely present",
+          "traces for the run are complete and connected",
+          "dashboard definitions load and their queries return data against the emitted metrics"
+        ]
+      },
+      {
+        "target": "retention end to end",
+        "cases": [
+          "seeding data across a range of ages, running the purge, and verifying exactly the expected rows and files remain",
+          "the purge job runs on its schedule in a running system",
+          "a purge interrupted mid-run resumes and completes correctly",
+          "purging a sighting belonging to a saved trajectory behaves per the stage 3 documented policy",
+          "verification reports clean immediately after a successful purge"
+        ]
+      },
+      {
+        "target": "audit analysis",
+        "cases": [
+          "searching the audit log by actor, target, time range, and endpoint returns correct results",
+          "a constructed anomalous pattern (a spike in one actor's searches) is detected",
+          "normal activity produces no anomaly flags",
+          "the generated period report contains the expected sections and accurate counts",
+          "audit analysis is itself restricted to the auditor role"
+        ]
+      },
+      {
+        "target": "silent-failure detection against real conditions",
+        "cases": [
+          "processing footage where one camera's feed is deliberately degraded triggers the quality alert for that camera and no others",
+          "simulating a camera going dark mid-run triggers the offline alert within the expected window",
+          "the alert message names the likely cause rather than reporting a bare threshold breach"
+        ]
+      }
+    ]
+  },
+
+  "exit_criteria": [
+    "Metric values are verified accurate against independently counted ground truth",
+    "The retention job demonstrably enforces the TTL end to end and is verified running",
+    "Silent-failure detection catches a degraded camera in a realistic test",
+    "Every sighting and trajectory resolves complete provenance",
+    "Governance documentation states measured error rates and the system's explicit limits",
+    "Runbooks exist for every identified operational failure mode"
+  ],
+
+  "deliverables": [
+    "src/multicam_tracker/observability/{__init__,metrics,tracing,health,silent_failure,provenance}.py",
+    "src/multicam_tracker/retention/{__init__,purge,holds,verification}.py",
+    "src/multicam_tracker/audit/{analysis,reports}.py",
+    "scripts/{run_purge,verify_retention,audit_report}.py",
+    "dashboards/*.json",
+    "tests/unit/observability/", "tests/unit/retention/",
+    "tests/integration/observability/test_metrics_accuracy.py",
+    "tests/integration/retention/test_retention_e2e.py",
+    "tests/integration/audit/test_audit_analysis.py",
+    "docs/RUNBOOKS.md", "docs/GOVERNANCE.md", "docs/OBSERVABILITY.md"
+  ]
+}

@@ -1,0 +1,185 @@
+{
+  "stage": 11,
+  "stage_id": "vehicle_detection",
+  "title": "Vehicle Detection and Single-Camera Tracking",
+  "inherits": "00_GLOBAL_CONTRACT.json",
+  "depends_on": [1, 2, 10],
+  "estimated_complexity": "medium-high",
+
+  "objective": "Detect vehicles in sampled frames and associate detections across consecutive frames into single-camera tracks, so that each vehicle pass produces one consolidated sighting built from its best frames rather than dozens of redundant per-frame records.",
+
+  "context_for_agent": "Single-camera tracking is what makes the rest of the system efficient and accurate: instead of emitting 40 sightings for one car crossing one camera, emit one sighting backed by the 40 frames, using the clearest frame for OCR and a pooled embedding. Keep the detector behind an interface so it can be swapped and so tests can run without model weights.",
+
+  "tasks": [
+    {
+      "id": "11.1",
+      "name": "Detection interface",
+      "detail": "Define a Detector protocol: detect(frame) -> list[Detection] and detect_batch(frames) -> list[list[Detection]]. Detection carries bbox (original source-frame coordinates), object_class, confidence, and optional mask. Implementations must be swappable via configuration with no changes to calling code."
+    },
+    {
+      "id": "11.2",
+      "name": "YOLO detector implementation",
+      "detail": "Implement YoloDetector wrapping Ultralytics: configurable weights path, device (cpu/cuda), confidence threshold, IoU threshold for NMS, and a class filter restricting output to vehicle classes mapped onto the ObjectClass enum. Support batched inference for throughput. Load weights lazily on first use, not at import, so importing the module in a test environment without weights does not fail. Record the model identifier and version on every detection for provenance."
+    },
+    {
+      "id": "11.3",
+      "name": "Fake and fixture detectors",
+      "detail": "Implement FakeDetector returning scripted detections for given frame indices, and FixtureDetector replaying detections recorded from a real model run on the committed sample clips. These let every downstream test run deterministically in CI with no weights and no GPU. Record and commit fixture detections for the sample media as part of this stage."
+    },
+    {
+      "id": "11.4",
+      "name": "Detection filtering",
+      "detail": "Apply post-detection filters: minimum bbox area (reject specks), maximum bbox area (reject a detection covering the whole frame), aspect-ratio sanity bounds, ROI membership (bbox centroid or a configurable overlap fraction inside the ROI), and edge-touching policy (a vehicle half out of frame usually yields an unreliable plate — configurable to keep-but-flag or drop). Each filter is independently configurable and each rejection is counted by reason for observability."
+    },
+    {
+      "id": "11.5",
+      "name": "Single-camera tracker",
+      "detail": "Implement a ByteTrack/SORT-style tracker associating detections across frames via IoU plus a Kalman motion model. Configurable: max frames a track may go unmatched before termination, minimum hits before a track is confirmed, and IoU association threshold. Each track has a stable track_id, a first/last frame index, and its full detection history. Handle occlusion (a vehicle passing behind a pole) by allowing a track to survive a configurable gap."
+    },
+    {
+      "id": "11.6",
+      "name": "Track lifecycle and consolidation",
+      "detail": "On track termination emit a VehicleTrack containing: track_id, camera_id, first and last timestamps, all detections, and a computed best_frames ranking. Ranking criteria (configurable weights): detection confidence, bbox area (larger is usually closer and sharper), sharpness measured by Laplacian variance, centrality in frame, and absence of edge-touching. Downstream OCR uses the top-ranked frames; this ranking directly determines plate read quality, so make the criteria explicit and tunable."
+    },
+    {
+      "id": "11.7",
+      "name": "Track-to-sighting conversion",
+      "detail": "Implement track_to_sighting(track) producing exactly one Sighting per track by default: timestamp taken from a documented rule (recommend the frame nearest the track's midpoint, since it is typically the most central view — document the choice), bbox from that frame, detection_confidence aggregated across the track, and a thumbnail cropped from the best frame. Support a configurable option to emit multiple sightings for very long tracks (a vehicle parked in view for ten minutes should not be a single instantaneous sighting)."
+    },
+    {
+      "id": "11.8",
+      "name": "Thumbnail extraction and storage",
+      "detail": "Crop the vehicle region with configurable padding, resize to a standard dimension, encode as JPEG at a configured quality, and write to the configured storage directory using a collision-free path scheme derived from camera and timestamp. Handle bboxes extending past frame edges by clamping. Thumbnails are subject to the retention TTL from stage 3."
+    },
+    {
+      "id": "11.9",
+      "name": "Performance instrumentation",
+      "detail": "Record per-stage timing (decode, detect, track, crop), frames-per-second throughput, detection counts by class, and filter rejection counts by reason. Expose these to stage 18's metrics system. Provide scripts/benchmark_detection.py measuring throughput across batch sizes and devices so operators can size hardware."
+    }
+  ],
+
+  "tests_substage": {
+    "id": "11.T",
+    "description": "Test tracking logic exhaustively with the fake detector where ground truth is exact; test the real model sparingly and only for integration correctness, never for accuracy assertions that depend on weights.",
+    "unit_tests": [
+      {
+        "target": "detection filtering",
+        "cases": [
+          "a bbox below the minimum area is rejected and counted under the correct reason",
+          "a bbox above the maximum area is rejected",
+          "an aspect ratio outside bounds is rejected",
+          "a bbox whose centroid is outside the ROI is rejected; just inside is kept",
+          "an edge-touching bbox is dropped or flagged per configuration, and both modes are tested",
+          "a bbox exactly at each threshold boundary is handled per the documented inclusivity convention",
+          "with all filters disabled, every detection passes through unchanged"
+        ]
+      },
+      {
+        "target": "tracker association",
+        "cases": [
+          "a single object moving linearly across 20 frames produces exactly one track",
+          "two well-separated objects produce exactly two tracks with stable distinct ids",
+          "two objects crossing paths do not swap track ids (constructed crossing case)",
+          "an object disappearing for fewer frames than the max-age threshold retains its track id on reappearance",
+          "an object disappearing for longer than the threshold produces a new track id",
+          "a track with fewer hits than the minimum is never confirmed and emits no sighting",
+          "an empty detection stream produces no tracks",
+          "a stationary object produces one continuous track",
+          "an object entering and leaving frame produces one track with correct first and last indices"
+        ]
+      },
+      {
+        "target": "best frame ranking",
+        "cases": [
+          "among frames identical except for detection confidence, the highest-confidence frame ranks first",
+          "among frames identical except for sharpness, the sharpest ranks first (verified with synthetically blurred images)",
+          "an edge-touching frame ranks below an equivalent centered frame",
+          "a larger bbox ranks above a smaller one when other factors are equal",
+          "ranking is deterministic for identical inputs",
+          "configured weight changes measurably change the ranking"
+        ]
+      },
+      {
+        "target": "track to sighting conversion",
+        "cases": [
+          "a track produces exactly one sighting by default",
+          "the sighting timestamp follows the documented selection rule exactly",
+          "the bbox corresponds to the selected frame and is in original source-frame coordinates",
+          "aggregated detection confidence is computed per the documented method",
+          "a very long track produces multiple sightings when that option is enabled, at the configured interval",
+          "the produced Sighting passes the stage 2 model validators"
+        ]
+      },
+      {
+        "target": "thumbnail extraction",
+        "cases": [
+          "the crop matches the bbox plus configured padding",
+          "a bbox extending past the frame edge is clamped and still produces a valid image",
+          "output dimensions match the configured standard size",
+          "two sightings from the same camera in the same second produce distinct non-colliding paths",
+          "the encoded file is a readable JPEG",
+          "a zero-area bbox is handled without raising"
+        ]
+      }
+    ],
+    "property_based_tests": [
+      "For random detection sequences, every emitted track has last_frame_index >= first_frame_index.",
+      "For random detection sequences, no two simultaneously active tracks share a track_id.",
+      "Every emitted bbox lies within the original frame bounds after clamping."
+    ],
+    "integration_tests": [
+      {
+        "target": "YOLO detector",
+        "cases": [
+          "detects vehicles in a committed sample image containing known vehicles",
+          "returns an empty list on an empty road image without raising",
+          "the class filter excludes non-vehicle classes",
+          "batch inference produces results identical to sequential inference on the same frames",
+          "raising the confidence threshold monotonically reduces the detection count",
+          "weights load lazily — importing the module without weights present does not raise",
+          "a missing weights file raises VisionError naming the expected path",
+          "runs on CPU when cuda is unavailable rather than crashing"
+        ],
+        "note": "Mark 'requires_models'. Assert structural correctness, not specific accuracy numbers, so the tests survive a model upgrade."
+      },
+      {
+        "target": "end-to-end detection and tracking on sample media",
+        "cases": [
+          "a committed sample clip with a known number of vehicle passes produces the expected number of tracks within tolerance",
+          "the same clip processed twice produces identical results (determinism with fixed seeds)",
+          "the FixtureDetector replay produces the same tracks as the recorded real run",
+          "thumbnails are written for every emitted sighting and all are readable"
+        ]
+      },
+      {
+        "target": "performance",
+        "cases": [
+          "throughput on CPU meets a documented floor for the sample clip (marked 'slow')",
+          "batched inference outperforms per-frame inference at batch size 8",
+          "the motion prefilter from stage 10 measurably reduces detector invocations on a mostly-static clip",
+          "memory usage stays bounded across a long clip — no growth per frame"
+        ]
+      }
+    ]
+  },
+
+  "exit_criteria": [
+    "One vehicle pass produces exactly one sighting, not one per frame",
+    "Track id stability is verified including the crossing-paths and occlusion cases",
+    "All downstream stages can run in CI using FakeDetector or FixtureDetector with no weights",
+    "Every emitted bbox is in original source-frame coordinates, verified through the full preprocessing chain",
+    "Detector implementation is swappable purely through configuration"
+  ],
+
+  "deliverables": [
+    "src/multicam_tracker/vision/{__init__,detector_protocol,yolo_detector,fake_detector,fixture_detector,filters,tracker,track,best_frames,thumbnails}.py",
+    "scripts/benchmark_detection.py",
+    "scripts/record_detection_fixtures.py",
+    "tests/unit/vision/ (one module per source module)",
+    "tests/integration/vision/test_yolo_detector.py",
+    "tests/integration/vision/test_detection_tracking_e2e.py",
+    "tests/fixtures/detections/ (recorded fixture detections for sample media)",
+    "tests/fixtures/images/ (sample frames including empty-road and multi-vehicle cases)",
+    "docs/DETECTION.md documenting the tracker parameters and best-frame ranking"
+  ]
+}
