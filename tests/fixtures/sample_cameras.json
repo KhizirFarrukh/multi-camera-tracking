@@ -1,0 +1,42 @@
+[
+  {
+    "camera_id": "cam_01",
+    "name": "Broadway & Canal St",
+    "lat": 40.7195,
+    "lon": -74.0021,
+    "heading_degrees": 90.0,
+    "clock_offset_ms": 0,
+    "enabled": true,
+    "notes": "Reference camera; its clock is the topology's time base."
+  },
+  {
+    "camera_id": "cam_02",
+    "name": "Bowery & Delancey St",
+    "lat": 40.7203,
+    "lon": -73.9925,
+    "heading_degrees": 180.0,
+    "clock_offset_ms": 0,
+    "enabled": true,
+    "notes": null
+  },
+  {
+    "camera_id": "cam_03",
+    "name": "Houston St & 2nd Ave",
+    "lat": 40.7255,
+    "lon": -73.9885,
+    "heading_degrees": 0.0,
+    "clock_offset_ms": 2000,
+    "enabled": true,
+    "notes": "Runs 2s slow; offset measured against cam_01 on 2026-08-01."
+  },
+  {
+    "camera_id": "cam_04",
+    "name": "14th St & 3rd Ave",
+    "lat": 40.7338,
+    "lon": -73.9873,
+    "heading_degrees": 359.9,
+    "clock_offset_ms": 0,
+    "enabled": false,
+    "notes": "Disabled pending lens replacement."
+  }
+]

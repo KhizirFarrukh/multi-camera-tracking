@@ -1,0 +1,34 @@
+[
+  {
+    "from_camera_id": "cam_01",
+    "to_camera_id": "cam_02",
+    "min_travel_time_sec": 45.0,
+    "max_travel_time_sec": 300.0,
+    "distance_meters": 815.0,
+    "bidirectional": true
+  },
+  {
+    "from_camera_id": "cam_02",
+    "to_camera_id": "cam_03",
+    "min_travel_time_sec": 40.0,
+    "max_travel_time_sec": 260.0,
+    "distance_meters": 690.0,
+    "bidirectional": true
+  },
+  {
+    "from_camera_id": "cam_03",
+    "to_camera_id": "cam_04",
+    "min_travel_time_sec": 60.0,
+    "max_travel_time_sec": 340.0,
+    "distance_meters": 925.0,
+    "bidirectional": true
+  },
+  {
+    "from_camera_id": "cam_01",
+    "to_camera_id": "cam_04",
+    "min_travel_time_sec": 180.0,
+    "max_travel_time_sec": 900.0,
+    "distance_meters": 2280.0,
+    "bidirectional": false
+  }
+]

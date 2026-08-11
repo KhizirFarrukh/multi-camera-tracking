@@ -97,6 +97,12 @@ known-first-party = ["multicam_tracker"]
 [tool.ruff.lint.per-file-ignores]
 # Assertions are the point of a test file; long parametrize tables are fine.
 "tests/**/*.py" = ["E501"]
+# UP042 wants enum.StrEnum. Stage 02 task 2.1 specifies `(str, Enum)` verbatim,
+# and both satisfy its stated purpose (members serialize as plain strings), so
+# the spec's mechanism wins. Delete this line and switch the base class if the
+# project later prefers StrEnum -- the only behavioural difference is that
+# str(member) yields "ObjectClass.CAR" here versus "car" under StrEnum.
+"src/multicam_tracker/models/enums.py" = ["UP042"]
 
 [tool.ruff.format]
 docstring-code-format = true
@@ -141,7 +147,9 @@ warn_required_dynamic_aliases = true
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
-pythonpath = ["src"]
+# "." puts the repo root on sys.path so shared builders under tests/fixtures/
+# are importable as `tests.fixtures.factories` from any stage's test module.
+pythonpath = ["src", "."]
 asyncio_mode = "auto"
 addopts = [
   "--strict-markers",

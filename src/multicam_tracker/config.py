@@ -165,7 +165,7 @@ class VisionSettings(_StrictSection):
     plate_detector_path: Path = Path("weights/plate_detector.pt")
     reid_model_path: Path = Path("weights/reid_osnet.pt")
     ocr_model_dir: Path | None = None
-    reid_embedding_dim: int = Field(default=512, ge=1)
+    embedding_dim: int = Field(default=512, ge=1)
     device: Literal["cpu", "cuda"] = "cpu"
     frame_sample_rate_fps: float = Field(default=3.0, gt=0.0, le=120.0)
     detection_min_confidence: float = Field(default=0.25, ge=0.0, le=1.0)
