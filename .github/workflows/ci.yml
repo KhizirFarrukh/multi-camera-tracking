@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Deterministic test environment. Anything a developer sets locally must not
+  # be able to change a CI result.
+  MCT_ENVIRONMENT: test
+  PYTHONHASHSEED: "0"
+  FORCE_COLOR: "1"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Lint, types, unit tests, coverage gate. Core + dev dependencies only -- the
+  # vision extra is deliberately excluded so this job stays under a minute.
+  # ---------------------------------------------------------------------------
+  quality:
+    name: Lint, types, unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Install Python 3.11
+        run: uv python install 3.11
+
+      - name: Install dependencies (core + dev, no vision)
+        run: uv sync --extra dev
+
+      - name: Ruff lint
+        run: uv run ruff check --output-format=github .
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+      - name: Mypy (strict)
+        run: uv run mypy
+
+      - name: Unit tests with coverage gate
+        # fail_under=85 lives in pyproject.toml [tool.coverage.report]; a drop
+        # below it fails this step, which is the gate the contract requires.
+        run: uv run pytest tests/unit -m "not integration"
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # Docker-backed tests. Separated from `quality` so a registry hiccup pulling
+  # the pgvector image cannot mask a genuine lint or type failure.
+  # ---------------------------------------------------------------------------
+  integration:
+    name: Integration tests (Postgres + pgvector)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Install Python 3.11
+        run: uv python install 3.11
+
+      - name: Install dependencies (core + dev, no vision)
+        run: uv sync --extra dev
+
+      - name: Pre-pull the database image
+        run: docker pull pgvector/pgvector:pg16
+
+      - name: Integration tests
+        run: uv run pytest tests/integration -m integration --no-cov
+
+  # ---------------------------------------------------------------------------
+  # The CV stack: slow to install and platform-sensitive. Opt-in only, via the
+  # 'vision' PR label or a manual dispatch, so day-to-day PRs are not taxed by
+  # a torch download.
+  # ---------------------------------------------------------------------------
+  vision:
+    name: Vision tests (opt-in)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'vision')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Install Python 3.11
+        run: uv python install 3.11
+
+      - name: Install dependencies (core + dev + vision)
+        run: uv sync --extra dev --extra vision
+
+      - name: Model-dependent tests
+        # No tests carry this marker until stage 11, and pytest exits 5 when a
+        # selector matches nothing. Treat that as success: until stage 11 the
+        # value of this job is proving the vision extra still resolves and
+        # installs, which is the failure that would otherwise surface at the
+        # worst possible moment.
+        run: |
+          set +e
+          uv run pytest -m requires_models --no-cov
+          status=$?
+          set -e
+          if [ "$status" -eq 5 ]; then
+            echo "No requires_models tests yet (expected until stage 11)."
+            exit 0
+          fi
+          exit "$status"

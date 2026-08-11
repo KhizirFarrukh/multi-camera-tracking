@@ -1,0 +1,42 @@
+# Local development dependencies only. The application itself is not
+# containerized here -- that lands in stage 19 (observability and packaging).
+#
+#   make db-up     start Postgres and wait for it to become healthy
+#   make db-down   stop it, preserving the volume
+#
+# Defaults below mirror multicam_tracker.config.DatabaseSettings so a fresh
+# clone with no .env connects successfully.
+
+services:
+  postgres:
+    # pgvector is required from stage 03 onward for re-id embedding search.
+    # Pinned to pg16 to match the global contract's declared database version.
+    image: pgvector/pgvector:pg16
+    container_name: multicam-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${MCT_DATABASE__USER:-postgres}
+      POSTGRES_PASSWORD: ${MCT_DATABASE__PASSWORD:-postgres}
+      POSTGRES_DB: ${MCT_DATABASE__DBNAME:-multicam}
+      # Deterministic collation: index ordering must not depend on the host locale.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "${MCT_DATABASE__PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # pg_isready alone reports ready during initdb, before the database is
+      # actually connectable. Naming the user and database closes that window.
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${MCT_DATABASE__USER:-postgres} -d ${MCT_DATABASE__DBNAME:-multicam}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  postgres_data:
+    name: multicam_postgres_data

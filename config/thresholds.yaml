@@ -1,0 +1,37 @@
+# Decision thresholds for matching and path reconstruction.
+#
+# This file is the ONLY source of these values. The Python model
+# (multicam_tracker.config.ThresholdSettings) declares every field as required
+# with no default, so a threshold that is added to the model but forgotten here
+# fails at startup rather than silently falling back to a magic number.
+#
+# Values below are the defaults from the global contract's confidence_model.
+# Any single value can be overridden per-environment without editing this file:
+#   MCT_THRESHOLDS__PLATE_FUZZY_MAX_EDIT_DISTANCE=1
+#
+# Stage 06 (plate matching) and stage 07 (embedding re-id) calibrate these
+# against the synthetic ground-truth datasets from stage 05. Treat the numbers
+# here as starting points, not as measured optima.
+
+# Minimum OCR confidence for a plate match to be auto-accepted without human
+# review. Below this, the match goes to the review queue (stage 18).
+plate_auto_accept_min_confidence: 0.85
+
+# Maximum Levenshtein distance, computed on the ambiguity-folded plate forms,
+# for two plates to be considered a fuzzy match. Tolerates the common OCR
+# confusions (0/O, 1/I, 8/B) without collapsing genuinely different plates.
+plate_fuzzy_max_edit_distance: 2
+
+# Cosine similarity at or above which a re-id embedding match is auto-accepted.
+embedding_auto_accept_min_similarity: 0.92
+
+# Cosine similarity at or above which a re-id embedding match is worth showing
+# to a human. Below this the candidate is discarded outright. The band between
+# this and embedding_auto_accept_min_similarity is the review zone.
+embedding_review_min_similarity: 0.75
+
+# Multiplier applied to a hop's confidence when the elapsed time between two
+# sightings falls outside the CameraLink travel-time window. The hop is
+# penalised, not discarded: an implausible transit may still be real (a detour,
+# a stop) and the confidence score is what surfaces the doubt to the operator.
+hop_implausible_penalty: 0.5
