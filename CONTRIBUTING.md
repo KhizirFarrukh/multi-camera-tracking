@@ -132,4 +132,32 @@ coverage gate. That is expected; pass `--no-cov` when iterating:
 uv run pytest tests/unit/test_config.py --no-cov -k thresholds
 ```
 
-Use `make test-all` or `make ci` for the real gate.
+## The coverage gate needs Docker
+
+From stage 03 onward, part of `src/` — the Postgres repository implementations —
+can only execute against a real database. A unit-only run therefore *cannot*
+reach 85%, and lowering the gate to accommodate that would defeat its purpose.
+
+So the gate is enforced where it can be measured honestly:
+
+| Command | Runs | Coverage gate |
+|---|---|---|
+| `make ci-quick` | lint, types, unit + in-memory conformance | no |
+| `make ci` | everything, including database tests | **yes** |
+| CI `quality` job | lint, types, unit + in-memory conformance | no |
+| CI `integration` job | everything | **yes** |
+
+Without Docker running, `make ci` will fail on coverage. That failure is
+accurate: a third of the persistence layer really is untested on that machine.
+Use `make ci-quick` while iterating, and `make ci` before opening a PR.
+
+## The conformance suite
+
+`tests/conformance/` holds one set of behavioural tests that runs against **both**
+the in-memory fakes and a real Postgres. Every stage from 04 onward writes its
+unit tests against the fakes, and that is only sound if the fakes behave exactly
+like the database.
+
+When you add a repository method, add it to the fake and to the conformance
+suite in the same change. A fake that quietly differs turns every unit test
+above it into a prediction about a system that does not exist.

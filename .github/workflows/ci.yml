@@ -51,18 +51,13 @@ jobs:
       - name: Mypy (strict)
         run: uv run mypy
 
-      - name: Unit tests with coverage gate
-        # fail_under=85 lives in pyproject.toml [tool.coverage.report]; a drop
-        # below it fails this step, which is the gate the contract requires.
-        run: uv run pytest tests/unit -m "not integration"
-
-      - name: Upload coverage report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-xml
-          path: coverage.xml
-          if-no-files-found: warn
+      - name: Unit tests and in-memory conformance
+        # No coverage gate here. From stage 03 on, part of src/ (the Postgres
+        # repositories) is only reachable with a database, so this job cannot
+        # meet the 85% target. The gate runs in the `integration` job below,
+        # against the full suite, which is the only run that can honestly
+        # measure it.
+        run: uv run pytest tests/unit tests/conformance -m "not integration" --no-cov
 
   # ---------------------------------------------------------------------------
   # Docker-backed tests. Separated from `quality` so a registry hiccup pulling
@@ -91,8 +86,19 @@ jobs:
       - name: Pre-pull the database image
         run: docker pull pgvector/pgvector:pg16
 
-      - name: Integration tests
-        run: uv run pytest tests/integration -m integration --no-cov
+      - name: Full suite with the coverage gate
+        # fail_under=85 lives in pyproject.toml [tool.coverage.report]. This is
+        # the only job with a database, so it is the only one where every line
+        # of src/ is reachable and the gate means something.
+        run: uv run pytest
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
   # The CV stack: slow to install and platform-sensitive. Opt-in only, via the

@@ -20,7 +20,7 @@ param(
     [ValidateSet(
         'help', 'install', 'install-vision', 'lint', 'format', 'format-check',
         'typecheck', 'test-unit', 'test-integration', 'test-all', 'coverage',
-        'db-up', 'db-down', 'db-reset', 'db-logs', 'clean', 'ci'
+        'db-up', 'db-down', 'db-reset', 'db-logs', 'clean', 'ci', 'ci-quick'
     )]
     [string]$Target = 'help',
 
@@ -51,16 +51,17 @@ function Show-Help {
         @{ n = 'format';           d = 'Rewrite files with the ruff formatter' },
         @{ n = 'format-check';     d = 'Verify formatting without rewriting' },
         @{ n = 'typecheck';        d = 'Run mypy in strict mode' },
-        @{ n = 'test-unit';        d = 'Run unit tests only (fast, no docker)' },
-        @{ n = 'test-integration'; d = 'Run integration tests (requires docker)' },
-        @{ n = 'test-all';         d = 'Run the whole suite with the coverage gate' },
+        @{ n = 'test-unit';        d = 'Unit + in-memory conformance (fast, no docker, no gate)' },
+        @{ n = 'test-integration'; d = 'Database-backed tests (requires docker)' },
+        @{ n = 'test-all';         d = 'Whole suite with the coverage gate (requires docker)' },
         @{ n = 'coverage';         d = 'Run the suite and write an HTML coverage report' },
         @{ n = 'db-up';            d = 'Start Postgres+pgvector and wait for health' },
         @{ n = 'db-down';          d = 'Stop Postgres, preserving the data volume' },
         @{ n = 'db-reset';         d = 'Stop Postgres and DESTROY the data volume' },
         @{ n = 'db-logs';          d = 'Tail the Postgres logs' },
         @{ n = 'clean';            d = 'Remove caches and build artefacts' },
-        @{ n = 'ci';               d = 'Everything CI runs, in CI order' }
+        @{ n = 'ci';               d = 'Everything CI runs (needs docker for the gate)' },
+        @{ n = 'ci-quick';         d = 'Same gates minus the database tests' }
     ) | ForEach-Object { Write-Host ("  {0,-18} {1}" -f $_.n, $_.d) }
 }
 
@@ -78,8 +79,8 @@ switch ($Target) {
     'format-check' { Invoke-Step 'ruff format --check' { uv run ruff format --check . } }
     'typecheck'    { Invoke-Step 'mypy' { uv run mypy } }
 
-    'test-unit'        { Invoke-Step 'pytest (unit)' { uv run pytest tests/unit -m "not integration" } }
-    'test-integration' { Invoke-Step 'pytest (integration)' { uv run pytest tests/integration -m integration } }
+    'test-unit'        { Invoke-Step 'pytest (unit)' { uv run pytest tests/unit tests/conformance -m "not integration" --no-cov } }
+    'test-integration' { Invoke-Step 'pytest (integration)' { uv run pytest tests/integration tests/conformance -m integration --no-cov } }
     'test-all'         { Invoke-Step 'pytest (all)' { uv run pytest } }
     'coverage'         {
         Invoke-Step 'pytest (html coverage)' { uv run pytest --cov-report=html }
@@ -110,5 +111,15 @@ switch ($Target) {
         Invoke-Step 'mypy' { uv run mypy }
         Invoke-Step 'pytest (all)' { uv run pytest }
         Write-Host 'CI passed.' -ForegroundColor Green
+    }
+
+    'ci-quick' {
+        Invoke-Step 'ruff check' { uv run ruff check . }
+        Invoke-Step 'ruff format --check' { uv run ruff format --check . }
+        Invoke-Step 'mypy' { uv run mypy }
+        Invoke-Step 'pytest (unit)' {
+            uv run pytest tests/unit tests/conformance -m "not integration" --no-cov
+        }
+        Write-Host 'Quick CI passed (database tests skipped).' -ForegroundColor Green
     }
 }

@@ -34,6 +34,8 @@ from multicam_tracker.models import (
 __all__ = [
     "BASE_INSTANT",
     "DEFAULT_EMBEDDING_DIM",
+    "PLACEHOLDER_SIGHTING_ID",
+    "PLACEHOLDER_TARGET_ID",
     "make_camera",
     "make_link",
     "make_match_candidate",
@@ -48,6 +50,14 @@ BASE_INSTANT = datetime(2026, 8, 10, 14, 22, 11, 500000, tzinfo=UTC)
 
 DEFAULT_EMBEDDING_DIM = 512
 """Mirrors the ``vision.embedding_dim`` default. Overridable per builder call."""
+
+PLACEHOLDER_TARGET_ID = "a0000000-0000-4000-8000-000000000001"
+"""Stand-in target id. A real UUID, not a readable slug: the ``targets`` table
+keys on a UUID column, so a slug would fail at the mapper rather than in the
+test that meant to exercise it."""
+
+PLACEHOLDER_SIGHTING_ID = "b0000000-0000-4000-8000-000000000001"
+"""Stand-in sighting id, for the same reason."""
 
 
 def unit_vector(seed: int = 0, dim: int = DEFAULT_EMBEDDING_DIM) -> list[float]:
@@ -177,8 +187,8 @@ def make_match_candidate(**overrides: Any) -> MatchCandidate:
         A validated match candidate.
     """
     fields: dict[str, Any] = {
-        "sighting_id": "sighting-1",
-        "target_id": "target-1",
+        "sighting_id": PLACEHOLDER_SIGHTING_ID,
+        "target_id": PLACEHOLDER_TARGET_ID,
         "match_method": MatchMethod.PLATE_EXACT,
         "match_score": 0.97,
         "plate_edit_distance": 0,
@@ -227,7 +237,7 @@ def make_trajectory(sightings: list[Sighting] | None = None, **overrides: Any) -
     ]
 
     fields: dict[str, Any] = {
-        "target_id": "target-1",
+        "target_id": PLACEHOLDER_TARGET_ID,
         "sightings": sightings,
         "hops": hops,
         "overall_confidence": 0.9,

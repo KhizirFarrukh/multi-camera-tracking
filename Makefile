@@ -16,7 +16,7 @@ COMPOSE ?= docker compose
 
 .PHONY: help install install-vision lint format format-check typecheck \
         test-unit test-integration test-all coverage db-up db-down db-logs \
-        db-reset clean ci
+        db-reset clean ci ci-quick
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -53,13 +53,16 @@ typecheck: ## Run mypy in strict mode over $(PKG)
 # Tests
 # ---------------------------------------------------------------------------
 
-test-unit: ## Run unit tests only (fast, no docker)
-	$(RUN) pytest tests/unit -m "not integration"
+# No coverage gate here. From stage 03 on, part of src/ (the Postgres
+# repositories) is only reachable with a database, so a unit-only run cannot
+# meet the 85% target and failing it would train everyone to ignore the number.
+test-unit: ## Run unit tests only (fast, no docker, no coverage gate)
+	$(RUN) pytest tests/unit tests/conformance -m "not integration" --no-cov
 
 test-integration: ## Run integration tests (requires docker)
-	$(RUN) pytest tests/integration -m integration
+	$(RUN) pytest tests/integration tests/conformance -m integration --no-cov
 
-test-all: ## Run the whole suite with the coverage gate
+test-all: ## Run the whole suite with the coverage gate (requires docker)
 	$(RUN) pytest
 
 coverage: ## Run the suite and write an HTML coverage report
@@ -86,7 +89,9 @@ db-logs: ## Tail the Postgres logs
 # Composite
 # ---------------------------------------------------------------------------
 
-ci: lint format-check typecheck test-all ## Everything CI runs, in CI's order
+ci: lint format-check typecheck test-all ## Everything CI runs (needs docker for the coverage gate)
+
+ci-quick: lint format-check typecheck test-unit ## Same gates minus the database tests
 
 clean: ## Remove caches and build artefacts
 	rm -rf .pytest_cache .mypy_cache .ruff_cache htmlcov .coverage coverage.xml build dist

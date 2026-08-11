@@ -14,6 +14,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+import warnings
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -152,3 +153,104 @@ def log_stream() -> io.StringIO:
         An empty :class:`io.StringIO` to pass to ``configure_logging``.
     """
     return io.StringIO()
+
+
+# ---------------------------------------------------------------------------
+# Database fixtures, shared by tests/conformance/ and tests/integration/db/
+# ---------------------------------------------------------------------------
+
+POSTGRES_IMAGE = "pgvector/pgvector:pg16"
+"""Must match docker-compose.yml, or CI and local development diverge silently."""
+
+
+def _postgres_container_class() -> type | None:
+    """Return testcontainers' PostgresContainer, or ``None`` if unavailable.
+
+    testcontainers moved the module under ``.community``; the old path emits a
+    DeprecationWarning, which this suite escalates to an error. Prefer the new
+    location and fall back quietly for older versions.
+
+    Returns:
+        The container class, or ``None`` when testcontainers is not installed.
+    """
+    try:
+        from testcontainers.community.postgres import PostgresContainer
+    except ImportError:  # pragma: no cover - depends on the installed version
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                from testcontainers.postgres import PostgresContainer
+        except ImportError:
+            return None
+    return PostgresContainer
+
+
+@pytest.fixture(scope="session")
+def migrated_engine() -> Iterator[Any]:
+    """Start Postgres, run every migration, and yield an engine bound to it.
+
+    Session-scoped: starting a container and building an HNSW index costs
+    seconds, and every database test can share one schema because each isolates
+    itself in a rolled-back transaction.
+
+    Migrations are run rather than ``metadata.create_all`` so the tests exercise
+    the schema that will actually be deployed -- generated column, partial
+    indexes, and HNSW index included.
+
+    Yields:
+        A SQLAlchemy engine connected to the migrated database.
+
+    Raises:
+        pytest.skip.Exception: If testcontainers or Docker is unavailable.
+    """
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import create_engine
+
+    container_class = _postgres_container_class()
+    if container_class is None:  # pragma: no cover - dev extra missing
+        pytest.skip("testcontainers is not installed")
+
+    # Construction, not just start(), contacts the Docker daemon.
+    try:
+        container = container_class(
+            image=POSTGRES_IMAGE,
+            username="multicam_test",
+            password="multicam_test",
+            dbname="multicam_test",
+            driver="psycopg",
+        )
+        container.start()
+    except Exception as exc:  # pragma: no cover - environment dependent
+        pytest.skip(f"Docker is not available for integration tests: {exc}")
+
+    url = container.get_connection_url()
+    config = Config(str(REPO_ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(REPO_ROOT / "migrations"))
+    config.set_main_option("sqlalchemy.url", url)
+
+    engine = create_engine(url)
+    try:
+        command.upgrade(config, "head")
+        yield engine
+    finally:
+        engine.dispose()
+        container.stop()
+
+
+@pytest.fixture(scope="session")
+def alembic_config(migrated_engine: Any) -> Any:
+    """Return an Alembic config pointed at the running test database.
+
+    Args:
+        migrated_engine: The migrated engine, which owns the container.
+
+    Returns:
+        A configured :class:`alembic.config.Config`.
+    """
+    from alembic.config import Config
+
+    config = Config(str(REPO_ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(REPO_ROOT / "migrations"))
+    config.set_main_option("sqlalchemy.url", str(migrated_engine.url.render_as_string(False)))
+    return config
