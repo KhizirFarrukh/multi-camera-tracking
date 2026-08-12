@@ -1,0 +1,151 @@
+# Camera topology: the graph path reconstruction searches over.
+#
+# This file is the AUTHORING format. The database is the runtime source of
+# truth; `sync_topology_to_db` pushes this file into it. Edit here, review the
+# diff, then sync.
+#
+# See docs/TOPOLOGY.md for the derivation model and the authoring rules.
+#
+# Two things are worth getting right before anything else:
+#
+#   1. Travel-time windows are the pruning mechanism. Too narrow and real hops
+#      are rejected; too wide and the search stops narrowing anything. Prefer
+#      measuring a few real transits over guessing.
+#   2. Direction matters. `bidirectional: false` means exactly one directed
+#      edge. A one-way street declared bidirectional invites the system to
+#      propose a route no vehicle could drive.
+
+# ---------------------------------------------------------------------------
+# Speed model used to derive travel times for links that omit them.
+#
+# Optional. Anything unspecified falls back to the value shown.
+# ---------------------------------------------------------------------------
+defaults:
+  # Slowest plausible average speed -> sets the UPPER travel-time bound.
+  # 10 km/h is congested-urban: slower than that and the vehicle is stopped,
+  # which additive_slack_sec covers instead.
+  min_speed_kph: 10.0
+
+  # Fastest plausible average speed -> sets the LOWER travel-time bound.
+  # Set this above the speed limit. It bounds what is *possible*, not what is
+  # legal, and a speeding vehicle is precisely the case worth catching.
+  max_speed_kph: 90.0
+
+  # Straight-line distance -> road distance. Roads do not run in straight
+  # lines; 1.3 is a common planning figure for an urban grid. Measure it for
+  # your network if accuracy matters: it scales every derived window linearly.
+  winding_factor: 1.3
+
+  # Added to the upper bound for signals, queueing, and brief stops. These do
+  # not scale with distance, so without a fixed allowance short links get
+  # absurdly tight windows.
+  additive_slack_sec: 60.0
+
+# ---------------------------------------------------------------------------
+# Cameras. camera_id must match ^[a-z0-9_-]+$ and is used in file paths, URLs,
+# log fields, and database keys -- so it must be stable once in use.
+# ---------------------------------------------------------------------------
+cameras:
+  - camera_id: cam_01
+    name: Broadway & Canal St
+    lat: 40.7195
+    lon: -74.0021
+    heading_degrees: 90.0
+    clock_offset_ms: 0
+    enabled: true
+    notes: Reference camera; its clock is the time base for the network.
+
+  - camera_id: cam_02
+    name: Bowery & Delancey St
+    lat: 40.7203
+    lon: -73.9925
+    heading_degrees: 180.0
+    enabled: true
+
+  - camera_id: cam_03
+    name: Houston St & 2nd Ave
+    lat: 40.7255
+    lon: -73.9885
+    heading_degrees: 0.0
+    clock_offset_ms: 2000
+    enabled: true
+    notes: Runs ~2s slow; offset measured against cam_01 on 2026-08-01.
+
+  - camera_id: cam_04
+    name: 14th St & 3rd Ave
+    lat: 40.7338
+    lon: -73.9873
+    heading_degrees: 270.0
+    enabled: true
+
+  - camera_id: cam_05
+    name: Union Sq North
+    lat: 40.7370
+    lon: -73.9903
+    heading_degrees: 45.0
+    enabled: true
+
+  - camera_id: cam_06
+    name: Depot Yard (survey pending)
+    lat: 40.7440
+    lon: -73.9820
+    enabled: true
+    notes: >-
+      Deliberately unlinked. Loads with an isolated-camera warning, which is
+      what a newly installed, not-yet-surveyed camera should look like.
+
+# ---------------------------------------------------------------------------
+# Links.
+#
+# Supply BOTH min_travel_time_sec and max_travel_time_sec, or NEITHER. A
+# half-specified window cannot be completed unambiguously, so it is rejected.
+#
+# Omitting both derives the window from the speed model above and marks the
+# edge derived, so every constraint is traceable to whether a human measured it
+# or the model inferred it.
+#
+# bidirectional defaults to true.
+# ---------------------------------------------------------------------------
+links:
+  # Measured: two weeks of observed transits, 5th to 95th percentile.
+  - from_camera_id: cam_01
+    to_camera_id: cam_02
+    min_travel_time_sec: 45.0
+    max_travel_time_sec: 300.0
+    distance_meters: 815.0
+    bidirectional: true
+
+  # Derived from the speed model.
+  - from_camera_id: cam_02
+    to_camera_id: cam_03
+    bidirectional: true
+
+  # Derived.
+  - from_camera_id: cam_03
+    to_camera_id: cam_04
+    bidirectional: true
+
+  # ONE-WAY. Southbound-only avenue: a vehicle can travel cam_04 -> cam_05 but
+  # not the reverse. has_link('cam_05', 'cam_04') is False, and a hop claimed in
+  # that direction is reported as having no known route.
+  - from_camera_id: cam_04
+    to_camera_id: cam_05
+    min_travel_time_sec: 30.0
+    max_travel_time_sec: 240.0
+    distance_meters: 420.0
+    bidirectional: false
+
+  # Long way round: the direct route between these two is the one-way above, so
+  # the return trip has to go back through cam_03. Measured, and deliberately
+  # wide -- it crosses three signalled junctions.
+  - from_camera_id: cam_05
+    to_camera_id: cam_03
+    min_travel_time_sec: 90.0
+    max_travel_time_sec: 600.0
+    bidirectional: false
+
+  # Derived long link, kept so the graph has a two-hop alternative to the
+  # cam_01 -> cam_02 -> cam_03 chain.
+  - from_camera_id: cam_01
+    to_camera_id: cam_04
+    bidirectional: false

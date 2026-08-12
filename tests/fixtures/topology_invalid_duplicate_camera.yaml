@@ -1,0 +1,11 @@
+# Failure mode: two cameras declare the same camera_id.
+cameras:
+  - camera_id: cam_a
+    name: First
+    lat: 0.0
+    lon: 0.0
+  - camera_id: cam_a
+    name: Second
+    lat: 1.0
+    lon: 1.0
+links: []

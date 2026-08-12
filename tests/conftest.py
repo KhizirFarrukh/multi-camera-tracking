@@ -238,6 +238,51 @@ def migrated_engine() -> Iterator[Any]:
         container.stop()
 
 
+@pytest.fixture
+def postgres_repositories(migrated_engine: Any) -> Iterator[Any]:
+    """Yield Postgres repositories inside a transaction that is rolled back.
+
+    Rolling back rather than truncating keeps each test isolated without paying
+    for a schema rebuild, and guarantees no test leaks state into the next even
+    if it fails partway through. ``join_transaction_mode="create_savepoint"``
+    means a repository's own flush cannot end the outer transaction early.
+
+    Yields:
+        A ``RepositorySet`` of Postgres-backed repositories sharing one session.
+    """
+    from sqlalchemy.orm import Session
+
+    from multicam_tracker.db.repositories import (
+        PostgresCameraLinkRepository,
+        PostgresCameraRepository,
+        PostgresMatchRepository,
+        PostgresSightingRepository,
+        PostgresTargetRepository,
+        PostgresTrajectoryRepository,
+    )
+    from tests.fixtures.fake_repositories import RepositorySet
+
+    connection = migrated_engine.connect()
+    transaction = connection.begin()
+    session = Session(
+        bind=connection, expire_on_commit=False, join_transaction_mode="create_savepoint"
+    )
+
+    try:
+        yield RepositorySet(
+            cameras=PostgresCameraRepository(session),
+            links=PostgresCameraLinkRepository(session),
+            sightings=PostgresSightingRepository(session),
+            targets=PostgresTargetRepository(session),
+            matches=PostgresMatchRepository(session),
+            trajectories=PostgresTrajectoryRepository(session),
+        )
+    finally:
+        session.close()
+        transaction.rollback()
+        connection.close()
+
+
 @pytest.fixture(scope="session")
 def alembic_config(migrated_engine: Any) -> Any:
     """Return an Alembic config pointed at the running test database.

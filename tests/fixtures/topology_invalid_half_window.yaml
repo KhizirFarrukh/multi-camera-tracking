@@ -1,0 +1,14 @@
+# Failure mode: only one of the two travel times supplied.
+cameras:
+  - camera_id: cam_a
+    name: Alpha
+    lat: 0.0
+    lon: 0.0
+  - camera_id: cam_b
+    name: Bravo
+    lat: 0.0
+    lon: 0.01
+links:
+  - from_camera_id: cam_a
+    to_camera_id: cam_b
+    min_travel_time_sec: 45.0

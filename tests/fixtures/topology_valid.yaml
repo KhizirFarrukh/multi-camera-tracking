@@ -1,0 +1,47 @@
+# Minimal topology used by the unit tests.
+#
+# Deliberately small and explicit: every travel-time window is authored rather
+# than derived, so a test asserting on a window is asserting on this file and
+# not on the speed model. Derivation is tested separately with its own inputs.
+#
+# Shape:
+#   cam_a <-> cam_b   bidirectional, explicit  (60-300s)
+#   cam_b  -> cam_c   ONE-WAY, explicit        (30-120s)
+#   cam_iso           isolated, no links       (warning on load)
+defaults:
+  min_speed_kph: 10.0
+  max_speed_kph: 90.0
+  winding_factor: 1.3
+  additive_slack_sec: 60.0
+
+cameras:
+  - camera_id: cam_a
+    name: Alpha St
+    lat: 0.0
+    lon: 0.0
+  - camera_id: cam_b
+    name: Bravo St
+    lat: 0.0
+    lon: 0.01
+  - camera_id: cam_c
+    name: Charlie St
+    lat: 0.0
+    lon: 0.02
+  - camera_id: cam_iso
+    name: Isolated Yard
+    lat: 10.0
+    lon: 10.0
+
+links:
+  - from_camera_id: cam_a
+    to_camera_id: cam_b
+    min_travel_time_sec: 60.0
+    max_travel_time_sec: 300.0
+    distance_meters: 1000.0
+    bidirectional: true
+  - from_camera_id: cam_b
+    to_camera_id: cam_c
+    min_travel_time_sec: 30.0
+    max_travel_time_sec: 120.0
+    distance_meters: 500.0
+    bidirectional: false

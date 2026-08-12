@@ -55,6 +55,7 @@ __all__ = [
     "StorageSettings",
     "ThresholdSettings",
     "ThresholdsYamlSource",
+    "TopologySettings",
     "VisionSettings",
     "default_thresholds_file",
     "get_settings",
@@ -169,6 +170,49 @@ class VisionSettings(_StrictSection):
     device: Literal["cpu", "cuda"] = "cpu"
     frame_sample_rate_fps: float = Field(default=3.0, gt=0.0, le=120.0)
     detection_min_confidence: float = Field(default=0.25, ge=0.0, le=1.0)
+
+
+class TopologySettings(_StrictSection):
+    """Operational knobs for the camera graph (stage 04).
+
+    The *speed model* used to derive travel times lives in the ``defaults``
+    block of ``topology.yaml``, not here: it describes a particular road
+    network, so it belongs with the topology it describes. What lives here is
+    everything that governs how the graph is *queried*, which is a property of
+    this deployment rather than of the roads.
+    """
+
+    topology_file: Path = Path("config/topology.yaml")
+    implausible_speed_kph: float = Field(
+        default=200.0,
+        gt=0.0,
+        description="Implied speed above which a link is warned about, not rejected",
+    )
+    min_redetection_gap_sec: float = Field(
+        default=60.0,
+        ge=0.0,
+        description="Below this gap, two sightings on one camera are one pass, not two transits",
+    )
+    plausibility_decay_half_life_sec: float = Field(
+        default=120.0,
+        gt=0.0,
+        description="Seconds outside a travel window at which the plausibility score halves",
+    )
+    unlinked_plausibility_score: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Score for a camera pair the topology does not connect. Non-zero on purpose: "
+            "an undeclared route is unexplained, not impossible, and a hard zero would "
+            "discard a real detour instead of merely penalising it."
+        ),
+    )
+    max_visited_nodes: int = Field(
+        default=10_000,
+        ge=1,
+        description="Expansion cap for multi-hop reachability; results are flagged truncated",
+    )
 
 
 class ThresholdSettings(_StrictSection):
@@ -339,6 +383,7 @@ class Settings(BaseSettings):
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     vision: VisionSettings = Field(default_factory=VisionSettings)
+    topology: TopologySettings = Field(default_factory=TopologySettings)
     thresholds: ThresholdSettings
     retention: RetentionSettings = Field(default_factory=RetentionSettings)
     api: ApiSettings = Field(default_factory=ApiSettings)

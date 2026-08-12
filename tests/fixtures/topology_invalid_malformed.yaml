@@ -1,0 +1,6 @@
+# Failure mode: not valid YAML at all.
+cameras:
+  - camera_id: cam_a
+    name: "unterminated
+    lat: 0.0
+  bad indent here

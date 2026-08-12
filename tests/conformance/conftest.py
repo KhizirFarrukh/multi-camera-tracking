@@ -9,61 +9,16 @@ prediction about production.
 When Docker is unavailable the Postgres parameter skips and the in-memory
 parameter still runs, so the suite stays useful on a machine without it.
 
-The container and migration fixtures live in ``tests/conftest.py`` because
-``tests/integration/db/`` needs them too.
+The container, migration, and Postgres-repository fixtures live in
+``tests/conftest.py`` because ``tests/integration/`` needs them too.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from typing import Any
-
 import pytest
-from sqlalchemy.orm import Session
 
-from multicam_tracker.db.repositories import (
-    PostgresCameraLinkRepository,
-    PostgresCameraRepository,
-    PostgresMatchRepository,
-    PostgresSightingRepository,
-    PostgresTargetRepository,
-    PostgresTrajectoryRepository,
-)
 from tests.fixtures.factories import make_camera
 from tests.fixtures.fake_repositories import RepositorySet, build_in_memory_repositories
-
-
-@pytest.fixture
-def postgres_repositories(migrated_engine: Any) -> Iterator[RepositorySet]:
-    """Yield Postgres repositories inside a transaction that is rolled back.
-
-    Rolling back rather than truncating keeps each test isolated without paying
-    for a schema rebuild, and guarantees no test leaks state into the next even
-    if it fails partway through. ``join_transaction_mode="create_savepoint"``
-    means a repository's own flush cannot end the outer transaction early.
-
-    Yields:
-        One repository of each kind, all sharing one session.
-    """
-    connection = migrated_engine.connect()
-    transaction = connection.begin()
-    session = Session(
-        bind=connection, expire_on_commit=False, join_transaction_mode="create_savepoint"
-    )
-
-    try:
-        yield RepositorySet(
-            cameras=PostgresCameraRepository(session),
-            links=PostgresCameraLinkRepository(session),
-            sightings=PostgresSightingRepository(session),
-            targets=PostgresTargetRepository(session),
-            matches=PostgresMatchRepository(session),
-            trajectories=PostgresTrajectoryRepository(session),
-        )
-    finally:
-        session.close()
-        transaction.rollback()
-        connection.close()
 
 
 @pytest.fixture(

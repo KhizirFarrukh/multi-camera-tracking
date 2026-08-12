@@ -1,0 +1,11 @@
+# Failure mode: a link from a camera to itself.
+cameras:
+  - camera_id: cam_a
+    name: Alpha
+    lat: 0.0
+    lon: 0.0
+links:
+  - from_camera_id: cam_a
+    to_camera_id: cam_a
+    min_travel_time_sec: 10.0
+    max_travel_time_sec: 20.0
