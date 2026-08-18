@@ -1,0 +1,37 @@
+name: adversarial
+description: "Everything at once: a drifting clock, a camera outage, duplicate records, a cloned plate, boundary-exact hops, and out-of-order arrival."
+topology_file: config/topology.yaml
+seed: 6006
+jitter_sec: 4.0
+ingest_delay_sec: 1.0
+vehicles:
+  - vehicle_id: target
+    plate: ABC1234
+    route: [cam_01, cam_02, cam_03, cam_04, cam_05]
+    departure_utc: '2026-08-10T14:00:00.000Z'
+    object_class: car
+    speed_profile: 0.45
+    is_target: true
+noise:
+  corruption_probability: 0.4
+embeddings:
+  dimension: 512
+  intra_class_sigma: 0.25
+  hard_negative_fraction: 0.3
+traffic:
+  decoy_vehicles: 15
+  decoy_route_length: 3
+  near_miss_edit_distances: [1]
+adversarial:
+  clock_drift:
+    - camera_id: cam_03
+      offset_sec: 45.0
+  outages:
+    - camera_id: cam_02
+      start_utc: '2026-08-10T14:40:00.000Z'
+      end_utc: '2026-08-10T15:10:00.000Z'
+  duplicate_passes: 4
+  duplicate_offset_sec: 0.4
+  clone_target_plate: true
+  boundary_hops: true
+  shuffle_emission_order: true

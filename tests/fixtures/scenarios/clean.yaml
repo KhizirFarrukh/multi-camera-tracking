@@ -1,0 +1,22 @@
+name: clean
+description: "Perfect reads, no decoys. The floor: anything that fails here is broken, not merely imprecise."
+topology_file: config/topology.yaml
+seed: 1001
+jitter_sec: 3.0
+ingest_delay_sec: 1.0
+vehicles:
+  - vehicle_id: target
+    plate: ABC1234
+    route: [cam_01, cam_02, cam_03, cam_04, cam_05]
+    departure_utc: '2026-08-10T14:00:00.000Z'
+    object_class: car
+    speed_profile: 0.45
+    is_target: true
+noise:
+  corruption_probability: 0.0
+embeddings:
+  dimension: 512
+  intra_class_sigma: 0.10
+traffic:
+  decoy_vehicles: 0
+adversarial: {}

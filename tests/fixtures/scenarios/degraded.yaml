@@ -1,0 +1,29 @@
+name: degraded
+description: "Heavy OCR noise with frequent total read failures. Plate matching cannot carry this alone; re-id has to."
+topology_file: config/topology.yaml
+seed: 3003
+jitter_sec: 8.0
+ingest_delay_sec: 1.0
+vehicles:
+  - vehicle_id: target
+    plate: ABC1234
+    route: [cam_01, cam_02, cam_03, cam_04, cam_05]
+    departure_utc: '2026-08-10T14:00:00.000Z'
+    object_class: car
+    speed_profile: 0.45
+    is_target: true
+noise:
+  corruption_probability: 0.95
+  substitution_weight: 3.0
+  dropout_weight: 3.0
+  read_failure_weight: 8.0
+  spurious_weight: 2.0
+  max_substitutions: 3
+  confidence_penalty_per_severity: 0.28
+embeddings:
+  dimension: 512
+  intra_class_sigma: 0.40
+traffic:
+  decoy_vehicles: 20
+  decoy_route_length: 3
+adversarial: {}

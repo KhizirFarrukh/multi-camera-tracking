@@ -1,0 +1,28 @@
+name: realistic
+description: "Moderate OCR noise and moderate traffic. The everyday case thresholds are tuned against."
+topology_file: config/topology.yaml
+seed: 2002
+jitter_sec: 5.0
+ingest_delay_sec: 1.0
+vehicles:
+  - vehicle_id: target
+    plate: ABC1234
+    route: [cam_01, cam_02, cam_03, cam_04, cam_05]
+    departure_utc: '2026-08-10T14:00:00.000Z'
+    object_class: car
+    speed_profile: 0.45
+    is_target: true
+noise:
+  corruption_probability: 0.35
+  substitution_weight: 6.0
+  dropout_weight: 2.0
+  read_failure_weight: 1.5
+  spurious_weight: 1.0
+embeddings:
+  dimension: 512
+  intra_class_sigma: 0.25
+traffic:
+  decoy_vehicles: 25
+  decoy_route_length: 3
+  near_miss_edit_distances: [1, 2]
+adversarial: {}
