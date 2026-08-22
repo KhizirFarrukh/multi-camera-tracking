@@ -175,6 +175,7 @@ already validated.
 
 Full stage map: [coding-agent-prompts/README.md](coding-agent-prompts/README.md).
 Architecture detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Requested capabilities not yet in the staged plan: [docs/FEATURE_BACKLOG.md](docs/FEATURE_BACKLOG.md).
 Working conventions: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
