@@ -35,9 +35,9 @@ python scripts/generate_dataset.py tests/fixtures/scenarios/realistic.yaml --see
 from multicam_tracker.synth import generate_from_file
 
 dataset = generate_from_file("tests/fixtures/scenarios/realistic.yaml", seed=42)
-dataset.sightings                      # list[Sighting]
+dataset.sightings  # list[Sighting]
 dataset.ground_truth.vehicle_for(sid)  # which vehicle really produced it
-dataset.sightings_of("target")         # the target's sightings, in time order
+dataset.sightings_of("target")  # the target's sightings, in time order
 ```
 
 ---
@@ -241,13 +241,13 @@ outage that removed nothing tested nothing.
 ## The ground-truth artifact
 
 ```python
-truth.sighting_to_vehicle   # sighting_id -> vehicle_id, for every emitted sighting
-truth.vehicles              # per-vehicle: true plate, flags, time-ordered sighting ids
-truth.true_timestamps       # what really happened, before injected clock drift
-truth.corruptions           # every OCR failure, with mode and severity
-truth.injections            # every adversarial event
-truth.seed                  # regenerate exactly this dataset
-truth.read_failure_rate     # asserted on by the 'degraded' scenario
+truth.sighting_to_vehicle  # sighting_id -> vehicle_id, for every emitted sighting
+truth.vehicles  # per-vehicle: true plate, flags, time-ordered sighting ids
+truth.true_timestamps  # what really happened, before injected clock drift
+truth.corruptions  # every OCR failure, with mode and severity
+truth.injections  # every adversarial event
+truth.seed  # regenerate exactly this dataset
+truth.read_failure_rate  # asserted on by the 'degraded' scenario
 ```
 
 The artifact describes **what was emitted**, not what was planned: outage-removed

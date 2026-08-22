@@ -1,0 +1,36 @@
+# Character confusion groups for plate matching (stage 06).
+#
+# Folding collapses each group to one representative so two OCR readings of the
+# same plate land on the same comparison key. It is used for COMPARISON ONLY:
+# the folded form is never stored in plate_text_normalized and never shown to a
+# user as the plate (global contract, plate_normalization).
+#
+# WARNING: this map is also baked into the `plate_folded` generated column by
+# migration 0001. Changing it here without a migration would make the database
+# prefilter disagree with in-process matching -- candidates would be missed
+# rather than mis-scored, which is invisible in the results. A unit test
+# asserts the two stay in step and fails if they drift.
+#
+# Regional tuning: plate alphabets differ. A region whose plates never use the
+# letter O can safely drop that group and gain precision.
+
+# Confusable character -> canonical representative.
+#
+# Digits are the representatives because on most plate formats a digit is the
+# more likely true reading, so the folded form usually equals the correct one.
+folding:
+  O: "0"
+  Q: "0"
+  I: "1"
+  L: "1"
+  S: "5"
+  B: "8"
+  Z: "2"
+  G: "6"
+
+# Regional prefix/suffix stripping. Off by default: stripping a prefix that is
+# actually part of the plate destroys the identifier the whole system keys on,
+# and the failure is silent.
+regional:
+  strip_prefixes: []
+  strip_suffixes: []

@@ -252,6 +252,8 @@ def generate(
         target_plate=target_spec.plate if target_spec else None,
         span_start=span_start,
         span_seconds=span_width,
+        target_route=list(target_spec.route) if target_spec else None,
+        target_departure=target_spec.departure_utc if target_spec else None,
     )
     vehicles = _vehicles_from(scenario, decoys)
 

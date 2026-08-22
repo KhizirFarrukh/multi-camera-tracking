@@ -103,6 +103,10 @@ known-first-party = ["multicam_tracker"]
 # project later prefers StrEnum -- the only behavioural difference is that
 # str(member) yields "ObjectClass.CAR" here versus "car" under StrEnum.
 "src/multicam_tracker/models/enums.py" = ["UP042"]
+# The normalization tests feed deliberate homoglyphs (Cyrillic A, Greek zeta)
+# to prove they are rejected rather than silently accepted. Flagging them as
+# ambiguous is exactly right in prose and exactly wrong in this fixture.
+"tests/unit/matching/test_normalize.py" = ["E501", "RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.format]
 docstring-code-format = true

@@ -22,6 +22,45 @@ plate_auto_accept_min_confidence: 0.85
 # confusions (0/O, 1/I, 8/B) without collapsing genuinely different plates.
 plate_fuzzy_max_edit_distance: 2
 
+# Maximum CONFUSION-WEIGHTED distance for a fuzzy match.
+#
+# MEASURED, not guessed. The sweep in docs/PLATE_MATCHING.md shows a cliff at
+# exactly 1.0: precision on the 'realistic' scenario is 1.000 at 0.9 and below,
+# and 0.625 at 1.0 and above. The reason is structural rather than lucky -- an
+# in-group substitution (0 read as O) costs 0.5 while an arbitrary one costs
+# 1.0, so a cutoff just under 1.0 admits every genuine OCR confusion and
+# rejects every near-miss decoy that differs by an unrelated character.
+#
+# Re-run scripts/evaluate_matching.py --sweep before changing this.
+plate_fuzzy_max_weighted_distance: 0.9
+
+# Length difference beyond which two readings cannot be the same plate,
+# whatever their edit distance. A 4-character read and a 7-character plate are
+# not the same vehicle.
+plate_max_length_delta: 2
+
+# Cost of substituting a character for one it is genuinely confusable with. A
+# 0 read as O is far more likely than a 0 read as W, and charging both the same
+# would force a choice between admitting the W case and rejecting the O case.
+plate_confusion_substitution_cost: 0.5
+
+# Base weights by match method. Exact reads carry more evidence than fuzzy ones
+# even at identical OCR confidence.
+plate_exact_method_weight: 1.0
+plate_fuzzy_method_weight: 0.9
+
+# Score lost per unit of weighted edit distance.
+plate_distance_penalty_per_unit: 0.12
+
+# Below this score a candidate is discarded outright rather than queued. The
+# band between here and plate_auto_accept_min_confidence is the human review
+# zone (stage 18).
+#
+# MEASURED: 0.5 holds recall at 1.000 on 'realistic'; 0.6 drops it to 0.600
+# while buying no precision, because every candidate it removes was already
+# correct. See the sweep table in docs/PLATE_MATCHING.md.
+plate_review_min_confidence: 0.5
+
 # Cosine similarity at or above which a re-id embedding match is auto-accepted.
 embedding_auto_accept_min_similarity: 0.92
 

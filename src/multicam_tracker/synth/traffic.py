@@ -69,6 +69,8 @@ def generate_decoys(
     target_plate: str | None,
     span_start: datetime,
     span_seconds: float,
+    target_route: list[str] | None = None,
+    target_departure: datetime | None = None,
 ) -> list[DecoyVehicle]:
     """Build the scenario's background traffic.
 
@@ -80,6 +82,9 @@ def generate_decoys(
             Near-miss generation is skipped when there is no target.
         span_start: Earliest departure.
         span_seconds: Width of the departure window.
+        target_route: The target's route, used to place a cloned-plate decoy
+            somewhere that genuinely contradicts it.
+        target_departure: The target's departure instant, for the same reason.
 
     Returns:
         The decoys, in a deterministic order.
@@ -133,17 +138,77 @@ def generate_decoys(
 
     if scenario.adversarial.clone_target_plate and target_plate:
         decoys.append(
-            DecoyVehicle(
-                vehicle_id="clone_00",
+            _clone_of(
+                rng,
+                topology,
+                traffic.decoy_route_length,
                 plate=target_plate,
-                route=random_route(rng, topology, traffic.decoy_route_length),
-                departure_utc=span_start + timedelta(seconds=rng.uniform(0.0, span_seconds)),
-                speed_profile=rng.uniform(0.2, 0.8),
-                is_plate_clone=True,
+                target_route=target_route,
+                target_departure=target_departure,
+                fallback_start=span_start,
             )
         )
 
     return decoys
+
+
+def _clone_of(
+    rng: random.Random,
+    topology: Topology,
+    route_length: int,
+    *,
+    plate: str,
+    target_route: list[str] | None,
+    target_departure: datetime | None,
+    fallback_start: datetime,
+) -> DecoyVehicle:
+    """Build a decoy wearing the target's plate, placed so it contradicts it.
+
+    A clone that happened to drive hours later is indistinguishable from the
+    target taking a long tour, and would test nothing. Detection works precisely
+    because two vehicles wearing one plate appear in incompatible places at
+    overlapping times -- so the clone departs when the target does, from the far
+    end of the target's route.
+
+    Args:
+        rng: Seeded generator.
+        topology: Graph the clone drives over.
+        route_length: Cameras in the clone's route.
+        plate: The target's plate, worn by the clone.
+        target_route: The target's route, whose far end the clone starts from.
+        target_departure: The target's departure instant.
+        fallback_start: Departure to use when the target's is unknown.
+
+    Returns:
+        The cloned-plate decoy.
+    """
+    departure = target_departure if target_departure is not None else fallback_start
+
+    route: list[str] = []
+    if target_route:
+        # Start from the far end of the target's route: at the shared departure
+        # instant the two vehicles are then as far apart as the route allows,
+        # which is what makes the pair physically irreconcilable.
+        origin = target_route[-1]
+        if topology.neighbors(origin):
+            route = [origin]
+            while len(route) < route_length:
+                options = topology.neighbors(route[-1])
+                if not options:
+                    break
+                route.append(rng.choice(options).to_camera_id)
+
+    if not route:
+        route = random_route(rng, topology, route_length)
+
+    return DecoyVehicle(
+        vehicle_id="clone_00",
+        plate=plate,
+        route=route,
+        departure_utc=departure,
+        speed_profile=rng.uniform(0.2, 0.8),
+        is_plate_clone=True,
+    )
 
 
 def unused_alphabet_char(rng: random.Random, exclude: str) -> str:

@@ -196,10 +196,20 @@ def test_settings__empty_thresholds_file__reports_missing_thresholds(tmp_path: P
     with pytest.raises(PydanticValidationError) as excinfo:
         Settings(_env_file=None, thresholds_file=path)
 
+    # Every threshold, not a sample: the point of the required-field design is
+    # that a value omitted from the YAML cannot silently fall back to a default,
+    # so the error has to name all of them.
     missing = {error["loc"][-1] for error in excinfo.value.errors()}
     assert missing == {
         "plate_auto_accept_min_confidence",
         "plate_fuzzy_max_edit_distance",
+        "plate_fuzzy_max_weighted_distance",
+        "plate_max_length_delta",
+        "plate_confusion_substitution_cost",
+        "plate_exact_method_weight",
+        "plate_fuzzy_method_weight",
+        "plate_distance_penalty_per_unit",
+        "plate_review_min_confidence",
         "embedding_auto_accept_min_similarity",
         "embedding_review_min_similarity",
         "hop_implausible_penalty",
@@ -280,6 +290,13 @@ def test_threshold_settings__inverted_review_band__is_rejected() -> None:
         ThresholdSettings(
             plate_auto_accept_min_confidence=0.85,
             plate_fuzzy_max_edit_distance=2,
+            plate_fuzzy_max_weighted_distance=0.9,
+            plate_max_length_delta=2,
+            plate_confusion_substitution_cost=0.5,
+            plate_exact_method_weight=1.0,
+            plate_fuzzy_method_weight=0.9,
+            plate_distance_penalty_per_unit=0.12,
+            plate_review_min_confidence=0.5,
             embedding_auto_accept_min_similarity=0.60,
             embedding_review_min_similarity=0.75,
             hop_implausible_penalty=0.5,

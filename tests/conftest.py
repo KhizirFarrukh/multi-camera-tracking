@@ -106,6 +106,13 @@ def custom_thresholds_file(tmp_path: Path) -> Path:
             [
                 "plate_auto_accept_min_confidence: 0.70",
                 "plate_fuzzy_max_edit_distance: 1",
+                "plate_fuzzy_max_weighted_distance: 0.8",
+                "plate_max_length_delta: 1",
+                "plate_confusion_substitution_cost: 0.4",
+                "plate_exact_method_weight: 0.95",
+                "plate_fuzzy_method_weight: 0.8",
+                "plate_distance_penalty_per_unit: 0.2",
+                "plate_review_min_confidence: 0.45",
                 "embedding_auto_accept_min_similarity: 0.88",
                 "embedding_review_min_similarity: 0.60",
                 "hop_implausible_penalty: 0.25",

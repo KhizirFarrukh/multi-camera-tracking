@@ -223,6 +223,13 @@ class ThresholdSettings(_StrictSection):
 
     plate_auto_accept_min_confidence: float = Field(ge=0.0, le=1.0)
     plate_fuzzy_max_edit_distance: int = Field(ge=0)
+    plate_fuzzy_max_weighted_distance: float = Field(ge=0.0)
+    plate_max_length_delta: int = Field(ge=0)
+    plate_confusion_substitution_cost: float = Field(ge=0.0, le=1.0)
+    plate_exact_method_weight: float = Field(ge=0.0, le=1.0)
+    plate_fuzzy_method_weight: float = Field(ge=0.0, le=1.0)
+    plate_distance_penalty_per_unit: float = Field(ge=0.0)
+    plate_review_min_confidence: float = Field(ge=0.0, le=1.0)
     embedding_auto_accept_min_similarity: float = Field(ge=-1.0, le=1.0)
     embedding_review_min_similarity: float = Field(ge=-1.0, le=1.0)
     hop_implausible_penalty: float = Field(ge=0.0, le=1.0)

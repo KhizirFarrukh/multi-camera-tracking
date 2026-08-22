@@ -1,0 +1,96 @@
+{
+  "adversarial": {
+    "auto_accept_precision": 0.6667,
+    "auto_accepted_false": 2,
+    "auto_accepted_true": 4,
+    "f1": 0.7273,
+    "false_negatives": 1,
+    "false_positives": 2,
+    "misses_by_corruption": {
+      "substitution": 1
+    },
+    "precision": 0.6667,
+    "recall": 0.8,
+    "scenario_name": "adversarial",
+    "target_vehicle_id": "target",
+    "true_positives": 4
+  },
+  "clean": {
+    "auto_accept_precision": 1.0,
+    "auto_accepted_false": 0,
+    "auto_accepted_true": 5,
+    "f1": 1.0,
+    "false_negatives": 0,
+    "false_positives": 0,
+    "misses_by_corruption": {},
+    "precision": 1.0,
+    "recall": 1.0,
+    "scenario_name": "clean",
+    "target_vehicle_id": "target",
+    "true_positives": 5
+  },
+  "degraded": {
+    "auto_accept_precision": 1.0,
+    "auto_accepted_false": 0,
+    "auto_accepted_true": 0,
+    "f1": 0.3333,
+    "false_negatives": 4,
+    "false_positives": 0,
+    "misses_by_corruption": {
+      "dropout": 1,
+      "read_failure": 2,
+      "substitution": 1
+    },
+    "precision": 1.0,
+    "recall": 0.2,
+    "scenario_name": "degraded",
+    "target_vehicle_id": "target",
+    "true_positives": 1
+  },
+  "hard_negatives": {
+    "auto_accept_precision": 1.0,
+    "auto_accepted_false": 0,
+    "auto_accepted_true": 3,
+    "f1": 0.8889,
+    "false_negatives": 1,
+    "false_positives": 0,
+    "misses_by_corruption": {
+      "dropout": 1
+    },
+    "precision": 1.0,
+    "recall": 0.8,
+    "scenario_name": "hard_negatives",
+    "target_vehicle_id": "target",
+    "true_positives": 4
+  },
+  "realistic": {
+    "auto_accept_precision": 1.0,
+    "auto_accepted_false": 0,
+    "auto_accepted_true": 3,
+    "f1": 1.0,
+    "false_negatives": 0,
+    "false_positives": 0,
+    "misses_by_corruption": {},
+    "precision": 1.0,
+    "recall": 1.0,
+    "scenario_name": "realistic",
+    "target_vehicle_id": "target",
+    "true_positives": 5
+  },
+  "sparse_coverage": {
+    "auto_accept_precision": 1.0,
+    "auto_accepted_false": 0,
+    "auto_accepted_true": 1,
+    "f1": 0.5,
+    "false_negatives": 2,
+    "false_positives": 0,
+    "misses_by_corruption": {
+      "substitution": 2
+    },
+    "precision": 1.0,
+    "recall": 0.3333,
+    "scenario_name": "sparse_coverage",
+    "target_vehicle_id": "target",
+    "true_positives": 1
+  }
+}
