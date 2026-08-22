@@ -232,6 +232,11 @@ class ThresholdSettings(_StrictSection):
     plate_review_min_confidence: float = Field(ge=0.0, le=1.0)
     embedding_auto_accept_min_similarity: float = Field(ge=-1.0, le=1.0)
     embedding_review_min_similarity: float = Field(ge=-1.0, le=1.0)
+    embedding_margin_min: float = Field(ge=0.0, le=2.0)
+    embedding_only_score_ceiling: float = Field(ge=0.0, le=1.0)
+    embedding_agreement_boost: float = Field(ge=0.0, le=1.0)
+    embedding_disagreement_similarity: float = Field(ge=-1.0, le=1.0)
+    embedding_max_references: int = Field(ge=1)
     hop_implausible_penalty: float = Field(ge=0.0, le=1.0)
 
     @model_validator(mode="after")
@@ -250,6 +255,34 @@ class ThresholdSettings(_StrictSection):
             msg = (
                 "embedding_auto_accept_min_similarity must be >= "
                 "embedding_review_min_similarity; otherwise no review band exists"
+            )
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _visual_evidence_cannot_outrank_plate_evidence(self) -> ThresholdSettings:
+        """Reject a visual score ceiling that could match a plate match.
+
+        The rule that appearance never outranks a plate is enforced structurally
+        by this one inequality. Leaving it as a comment beside the YAML would
+        let a plausible-looking edit invert the evidence hierarchy silently, and
+        the symptom -- a visual guess presented with the authority of a plate
+        read -- would surface as an operator acting on the wrong vehicle.
+
+        Returns:
+            The validated instance.
+
+        Raises:
+            ValueError: If the ceiling reaches the weakest score a retained
+                plate match can carry.
+        """
+        weakest_plate_score = self.plate_review_min_confidence * self.plate_exact_method_weight
+        if self.embedding_only_score_ceiling >= weakest_plate_score:
+            msg = (
+                f"embedding_only_score_ceiling ({self.embedding_only_score_ceiling}) must be "
+                f"< plate_review_min_confidence x plate_exact_method_weight "
+                f"({weakest_plate_score}); otherwise a visual-only match can outrank a "
+                f"plate match"
             )
             raise ValueError(msg)
         return self

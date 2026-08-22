@@ -115,6 +115,11 @@ def custom_thresholds_file(tmp_path: Path) -> Path:
                 "plate_review_min_confidence: 0.45",
                 "embedding_auto_accept_min_similarity: 0.88",
                 "embedding_review_min_similarity: 0.60",
+                "embedding_margin_min: 0.06",
+                "embedding_only_score_ceiling: 0.30",
+                "embedding_agreement_boost: 0.10",
+                "embedding_disagreement_similarity: 0.35",
+                "embedding_max_references: 4",
                 "hop_implausible_penalty: 0.25",
                 "",
             ]

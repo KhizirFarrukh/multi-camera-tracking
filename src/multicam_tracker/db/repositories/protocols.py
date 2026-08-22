@@ -329,6 +329,7 @@ class SightingRepository(Protocol):
         *,
         camera_ids: list[str] | None = None,
         window: TimeWindow | None = None,
+        model_version: str | None = None,
     ) -> list[EmbeddingMatch]:
         """Return the ``k`` sightings most similar to ``embedding``.
 
@@ -341,6 +342,12 @@ class SightingRepository(Protocol):
             k: Maximum number of results.
             camera_ids: Restrict to these cameras. ``None`` searches all.
             window: Optional half-open window on ``timestamp_utc``.
+            model_version: Restrict to embeddings produced by this model.
+                ``None`` searches every version, which is only safe when the
+                table holds exactly one. During a re-embedding migration two
+                versions coexist deliberately, and comparing across them yields
+                a plausible-looking number with no meaning -- so a caller
+                searching a migrating table must pass this.
 
         Returns:
             At most ``k`` matches, ordered by descending cosine similarity.

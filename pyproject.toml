@@ -33,6 +33,10 @@ dependencies = [
   "pgvector>=0.3,<1",
   "pyyaml>=6.0,<7",
   "structlog>=24.1,<26",
+  # Vector maths for re-id similarity (stage 07). Core rather than a vision
+  # extra because the matching path is not optional, and numpy carries no CV
+  # or model-weight dependency of its own.
+  "numpy>=1.26,<3",
 ]
 
 [project.optional-dependencies]
@@ -47,7 +51,6 @@ vision = [
   "paddleocr>=2.8,<4",
   "torch>=2.3,<3",
   "torchvision>=0.18,<1",
-  "numpy>=1.26,<3",
   "pillow>=10.3,<12",
 ]
 

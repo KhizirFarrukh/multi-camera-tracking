@@ -462,6 +462,7 @@ class InMemorySightingRepository:
         *,
         camera_ids: list[str] | None = None,
         window: TimeWindow | None = None,
+        model_version: str | None = None,
     ) -> list[EmbeddingMatch]:
         """Return the ``k`` most similar sightings.
 
@@ -470,6 +471,7 @@ class InMemorySightingRepository:
             k: Maximum results.
             camera_ids: Restrict to these cameras.
             window: Optional half-open window.
+            model_version: Restrict to embeddings from this model.
 
         Returns:
             At most ``k`` matches, most similar first.
@@ -495,6 +497,7 @@ class InMemorySightingRepository:
             for sighting in self._store.sightings.values()
             if sighting.embedding is not None
             and (allowed is None or sighting.camera_id in allowed)
+            and (model_version is None or sighting.embedding_model_version == model_version)
             and _in_window(sighting.timestamp_utc, window)
         ]
         # Ties broken by id so the fake is deterministic; Postgres orders by

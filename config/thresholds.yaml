@@ -61,13 +61,45 @@ plate_distance_penalty_per_unit: 0.12
 # correct. See the sweep table in docs/PLATE_MATCHING.md.
 plate_review_min_confidence: 0.5
 
-# Cosine similarity at or above which a re-id embedding match is auto-accepted.
-embedding_auto_accept_min_similarity: 0.92
+# Cosine similarity at or above which a re-id embedding match is auto-accepted
+# without a human.
+#
+# MEASURED, not guessed. On the 'hard_negatives' scenario -- decoys drawn
+# deliberately close to the target -- 0.92 auto-accepts 21 decoys while 0.95
+# auto-accepts ZERO, at no cost to recall (1.000 either way) and no loss of
+# plate-failure recovery. The sweep is in docs/REID_MATCHING.md.
+#
+# The contract's 0.92 was a reasonable prior; the measurement says otherwise,
+# and hard negatives are exactly the case a prior cannot anticipate.
+embedding_auto_accept_min_similarity: 0.95
 
 # Cosine similarity at or above which a re-id embedding match is worth showing
 # to a human. Below this the candidate is discarded outright. The band between
 # this and embedding_auto_accept_min_similarity is the review zone.
 embedding_review_min_similarity: 0.75
+
+# Minimum gap between the best and second-best embedding candidate before the
+# best may be auto-accepted. Two near-identical vehicles must never be resolved
+# without a human, however high the absolute score -- a confident choice between
+# two indistinguishable options is a coin flip wearing a number.
+embedding_margin_min: 0.04
+
+# Ceiling on a visual-only match score. Deliberately below
+# plate_review_min_confidence x plate_exact_method_weight so an embedding match
+# can never outrank any valid plate match. Re-id is weaker evidence: many
+# vehicles share a make, model, and colour.
+embedding_only_score_ceiling: 0.45
+
+# Added when plate and embedding agree, bounded at 1.0.
+embedding_agreement_boost: 0.05
+
+# Below this similarity, an embedding actively contradicts a strong plate match
+# rather than merely failing to corroborate it. The pair is flagged conflicting
+# and forced to human review.
+embedding_disagreement_similarity: 0.4
+
+# Reference embeddings retained per target after pruning.
+embedding_max_references: 8
 
 # Multiplier applied to a hop's confidence when the elapsed time between two
 # sightings falls outside the CameraLink travel-time window. The hop is

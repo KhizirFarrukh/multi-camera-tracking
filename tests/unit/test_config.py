@@ -85,8 +85,13 @@ def test_settings__committed_yaml__thresholds_are_loaded(
 
     assert thresholds.plate_auto_accept_min_confidence == pytest.approx(0.85)
     assert thresholds.plate_fuzzy_max_edit_distance == 2
-    assert thresholds.embedding_auto_accept_min_similarity == pytest.approx(0.92)
+    # 0.95 rather than the contract prior of 0.92: the stage 07 sweep found 0.92
+    # auto-accepts 21 hard-negative decoys and 0.95 auto-accepts none, at no cost
+    # to recall. See docs/REID_MATCHING.md.
+    assert thresholds.embedding_auto_accept_min_similarity == pytest.approx(0.95)
     assert thresholds.embedding_review_min_similarity == pytest.approx(0.75)
+    assert thresholds.embedding_margin_min == pytest.approx(0.04)
+    assert thresholds.embedding_only_score_ceiling == pytest.approx(0.45)
     assert thresholds.hop_implausible_penalty == pytest.approx(0.5)
 
 
@@ -212,6 +217,11 @@ def test_settings__empty_thresholds_file__reports_missing_thresholds(tmp_path: P
         "plate_review_min_confidence",
         "embedding_auto_accept_min_similarity",
         "embedding_review_min_similarity",
+        "embedding_margin_min",
+        "embedding_only_score_ceiling",
+        "embedding_agreement_boost",
+        "embedding_disagreement_similarity",
+        "embedding_max_references",
         "hop_implausible_penalty",
     }
 
@@ -299,8 +309,52 @@ def test_threshold_settings__inverted_review_band__is_rejected() -> None:
             plate_review_min_confidence=0.5,
             embedding_auto_accept_min_similarity=0.60,
             embedding_review_min_similarity=0.75,
+            embedding_margin_min=0.04,
+            embedding_only_score_ceiling=0.45,
+            embedding_agreement_boost=0.05,
+            embedding_disagreement_similarity=0.4,
+            embedding_max_references=8,
             hop_implausible_penalty=0.5,
         )
+
+
+def test_threshold_settings__visual_ceiling_reaching_plate_scores__is_rejected() -> None:
+    """The evidence hierarchy is one inequality, so it is checked at startup.
+
+    A ceiling at or above the weakest retained plate score would let a visual
+    guess be presented with the authority of a plate read.
+    """
+    with pytest.raises(PydanticValidationError, match="outrank a plate match"):
+        ThresholdSettings(
+            plate_auto_accept_min_confidence=0.85,
+            plate_fuzzy_max_edit_distance=2,
+            plate_fuzzy_max_weighted_distance=0.9,
+            plate_max_length_delta=2,
+            plate_confusion_substitution_cost=0.5,
+            plate_exact_method_weight=1.0,
+            plate_fuzzy_method_weight=0.9,
+            plate_distance_penalty_per_unit=0.12,
+            plate_review_min_confidence=0.5,
+            embedding_auto_accept_min_similarity=0.95,
+            embedding_review_min_similarity=0.75,
+            embedding_margin_min=0.04,
+            embedding_only_score_ceiling=0.5,
+            embedding_agreement_boost=0.05,
+            embedding_disagreement_similarity=0.4,
+            embedding_max_references=8,
+            hop_implausible_penalty=0.5,
+        )
+
+
+def test_threshold_settings__committed_values__satisfy_the_evidence_hierarchy(
+    build_settings: Callable[..., Settings],
+) -> None:
+    """The shipped configuration must itself obey the rule it enforces."""
+    thresholds = build_settings().thresholds
+
+    assert thresholds.embedding_only_score_ceiling < (
+        thresholds.plate_review_min_confidence * thresholds.plate_exact_method_weight
+    )
 
 
 def test_retention_settings__thumbnails_outliving_sightings__is_rejected() -> None:

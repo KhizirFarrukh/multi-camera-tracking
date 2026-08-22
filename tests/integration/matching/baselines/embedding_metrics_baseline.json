@@ -1,0 +1,116 @@
+{
+  "adversarial": {
+    "candidates_considered": 41,
+    "cmc": {
+      "1": 1.0,
+      "10": 1.0,
+      "5": 1.0
+    },
+    "combined_precision": 0.2353,
+    "combined_recall": 1.0,
+    "embedding_auto_accepted_false": 0,
+    "embedding_false_positive_rate": 0.7333,
+    "embedding_precision": 0.2667,
+    "embedding_recall": 1.0,
+    "margin_downgrades": 0,
+    "plate_failed_recovered": 1,
+    "plate_failed_total": 1,
+    "plate_failure_recovery_rate": 1.0,
+    "scenario_name": "adversarial"
+  },
+  "clean": {
+    "candidates_considered": 4,
+    "cmc": {
+      "1": 1.0,
+      "10": 1.0,
+      "5": 1.0
+    },
+    "combined_precision": 1.0,
+    "combined_recall": 1.0,
+    "embedding_auto_accepted_false": 0,
+    "embedding_false_positive_rate": 0.0,
+    "embedding_precision": 1.0,
+    "embedding_recall": 1.0,
+    "margin_downgrades": 1,
+    "plate_failed_recovered": 0,
+    "plate_failed_total": 0,
+    "plate_failure_recovery_rate": 0.0,
+    "scenario_name": "clean"
+  },
+  "degraded": {
+    "candidates_considered": 43,
+    "cmc": {
+      "1": 1.0,
+      "10": 1.0,
+      "5": 1.0
+    },
+    "combined_precision": 1.0,
+    "combined_recall": 1.0,
+    "embedding_auto_accepted_false": 0,
+    "embedding_false_positive_rate": 0.0,
+    "embedding_precision": 1.0,
+    "embedding_recall": 1.0,
+    "margin_downgrades": 0,
+    "plate_failed_recovered": 3,
+    "plate_failed_total": 3,
+    "plate_failure_recovery_rate": 1.0,
+    "scenario_name": "degraded"
+  },
+  "hard_negatives": {
+    "candidates_considered": 36,
+    "cmc": {
+      "1": 1.0,
+      "10": 1.0,
+      "5": 1.0
+    },
+    "combined_precision": 0.16,
+    "combined_recall": 1.0,
+    "embedding_auto_accepted_false": 0,
+    "embedding_false_positive_rate": 0.84,
+    "embedding_precision": 0.16,
+    "embedding_recall": 1.0,
+    "margin_downgrades": 0,
+    "plate_failed_recovered": 1,
+    "plate_failed_total": 1,
+    "plate_failure_recovery_rate": 1.0,
+    "scenario_name": "hard_negatives"
+  },
+  "realistic": {
+    "candidates_considered": 46,
+    "cmc": {
+      "1": 1.0,
+      "10": 1.0,
+      "5": 1.0
+    },
+    "combined_precision": 1.0,
+    "combined_recall": 1.0,
+    "embedding_auto_accepted_false": 0,
+    "embedding_false_positive_rate": 0.0,
+    "embedding_precision": 1.0,
+    "embedding_recall": 1.0,
+    "margin_downgrades": 0,
+    "plate_failed_recovered": 0,
+    "plate_failed_total": 0,
+    "plate_failure_recovery_rate": 0.0,
+    "scenario_name": "realistic"
+  },
+  "sparse_coverage": {
+    "candidates_considered": 19,
+    "cmc": {
+      "1": 1.0,
+      "10": 1.0,
+      "5": 1.0
+    },
+    "combined_precision": 1.0,
+    "combined_recall": 1.0,
+    "embedding_auto_accepted_false": 0,
+    "embedding_false_positive_rate": 0.0,
+    "embedding_precision": 1.0,
+    "embedding_recall": 1.0,
+    "margin_downgrades": 0,
+    "plate_failed_recovered": 2,
+    "plate_failed_total": 2,
+    "plate_failure_recovery_rate": 1.0,
+    "scenario_name": "sparse_coverage"
+  }
+}

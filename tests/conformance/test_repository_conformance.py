@@ -464,6 +464,60 @@ def test_find_nearest_by_embedding__ignores_sightings_without_an_embedding(
     assert [match.sighting.sighting_id for match in found] == [with_vector.sighting_id]
 
 
+def test_find_nearest_by_embedding__model_version_filter__excludes_other_versions(
+    repositories: RepositorySet, seeded_cameras: list[str]
+) -> None:
+    """Two model versions coexist during a re-embedding migration.
+
+    Their vectors occupy unrelated spaces, so a cross-version similarity is a
+    plausible-looking number with no meaning. The filter belongs in the query:
+    the rows must never reach the comparison.
+    """
+    current = make_sighting(
+        "cam_01", offset_sec=0, embedding=unit_vector(seed=1), embedding_model_version="reid_v1"
+    )
+    superseded = make_sighting(
+        "cam_01", offset_sec=10, embedding=unit_vector(seed=1), embedding_model_version="reid_v2"
+    )
+    repositories.sightings.add_batch([current, superseded])
+
+    found = repositories.sightings.find_nearest_by_embedding(
+        unit_vector(seed=1), k=10, model_version="reid_v1"
+    )
+
+    assert [match.sighting.sighting_id for match in found] == [current.sighting_id]
+
+
+def test_find_nearest_by_embedding__no_model_version__searches_every_version(
+    repositories: RepositorySet, seeded_cameras: list[str]
+) -> None:
+    """Omitting the filter is only safe on a single-version table, and says so.
+
+    Documented here rather than left implicit: the default is unfiltered, and a
+    caller searching a migrating table has to pass the version itself.
+    """
+    repositories.sightings.add_batch(
+        [
+            make_sighting(
+                "cam_01",
+                offset_sec=0,
+                embedding=unit_vector(seed=1),
+                embedding_model_version="reid_v1",
+            ),
+            make_sighting(
+                "cam_01",
+                offset_sec=10,
+                embedding=unit_vector(seed=2),
+                embedding_model_version="reid_v2",
+            ),
+        ]
+    )
+
+    found = repositories.sightings.find_nearest_by_embedding(unit_vector(seed=1), k=10)
+
+    assert len(found) == 2
+
+
 def test_find_nearest_by_embedding__window_filter__applies(
     repositories: RepositorySet, seeded_cameras: list[str]
 ) -> None:

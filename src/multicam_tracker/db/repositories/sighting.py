@@ -221,6 +221,7 @@ class PostgresSightingRepository(PostgresRepositoryBase):
         *,
         camera_ids: list[str] | None = None,
         window: TimeWindow | None = None,
+        model_version: str | None = None,
     ) -> list[EmbeddingMatch]:
         """Return the ``k`` most similar sightings by cosine similarity.
 
@@ -229,6 +230,9 @@ class PostgresSightingRepository(PostgresRepositoryBase):
             k: Maximum results.
             camera_ids: Restrict to these cameras.
             window: Optional half-open time window.
+            model_version: Restrict to embeddings from this model. Filtering in
+                the query rather than after it is what makes a mixed-version
+                table searchable at all: the rows never reach the comparison.
 
         Returns:
             At most ``k`` matches, most similar first.
@@ -250,6 +254,8 @@ class PostgresSightingRepository(PostgresRepositoryBase):
         )
         if camera_ids is not None:
             statement = statement.where(SightingORM.camera_id.in_(camera_ids))
+        if model_version is not None:
+            statement = statement.where(SightingORM.embedding_model_version == model_version)
         statement = _apply_window(statement, window)
 
         with storage_errors("embedding nearest-neighbour search", k=k):
