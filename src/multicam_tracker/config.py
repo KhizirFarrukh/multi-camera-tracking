@@ -50,6 +50,7 @@ from multicam_tracker.exceptions import ConfigurationError
 __all__ = [
     "ApiSettings",
     "DatabaseSettings",
+    "PathingSettings",
     "RetentionSettings",
     "Settings",
     "StorageSettings",
@@ -238,6 +239,10 @@ class ThresholdSettings(_StrictSection):
     embedding_disagreement_similarity: float = Field(ge=-1.0, le=1.0)
     embedding_max_references: int = Field(ge=1)
     hop_implausible_penalty: float = Field(ge=0.0, le=1.0)
+    path_node_inclusion_bonus: float = Field(ge=0.0, le=1.0)
+    path_gap_edge_penalty: float = Field(ge=0.0, le=1.0)
+    path_ambiguity_margin_min: float = Field(ge=0.0, le=1.0)
+    path_weakest_link_tolerance: float = Field(ge=0.0, le=1.0)
 
     @model_validator(mode="after")
     def _review_band_is_ordered(self) -> ThresholdSettings:
@@ -286,6 +291,43 @@ class ThresholdSettings(_StrictSection):
             )
             raise ValueError(msg)
         return self
+
+
+class PathingSettings(_StrictSection):
+    """Operational knobs for trajectory reconstruction (stage 08).
+
+    The *decision* values -- what makes a path preferable, when a result is too
+    close to call -- live in ``thresholds.yaml`` with every other threshold.
+    What lives here is how the search is executed: how far it looks, how much of
+    it it will do, and how long it waits for a late-arriving sighting. Those are
+    properties of a deployment rather than of the evidence.
+    """
+
+    max_skip_hops: int = Field(
+        default=3,
+        ge=1,
+        description="Hop budget when testing whether an unlinked pair is reachable indirectly",
+    )
+    reorder_buffer_sec: float = Field(
+        default=120.0,
+        ge=0.0,
+        description=(
+            "How far back a late-arriving sighting may land and still trigger a suffix "
+            "recomputation. Beyond this it is rejected rather than silently dropped: a "
+            "stream delivering minutes out of order has a problem the operator should see."
+        ),
+    )
+    k_best_default: int = Field(
+        default=3, ge=1, description="Alternative paths enumerated when none is requested"
+    )
+    stop_gap_multiplier: float = Field(
+        default=3.0,
+        gt=1.0,
+        description=(
+            "Elapsed time beyond this multiple of the plausible maximum is reported as a "
+            "stop or a departure from the network, not merely a slow transit"
+        ),
+    )
 
 
 class RetentionSettings(_StrictSection):
@@ -424,6 +466,7 @@ class Settings(BaseSettings):
     storage: StorageSettings = Field(default_factory=StorageSettings)
     vision: VisionSettings = Field(default_factory=VisionSettings)
     topology: TopologySettings = Field(default_factory=TopologySettings)
+    pathing: PathingSettings = Field(default_factory=PathingSettings)
     thresholds: ThresholdSettings
     retention: RetentionSettings = Field(default_factory=RetentionSettings)
     api: ApiSettings = Field(default_factory=ApiSettings)

@@ -121,6 +121,10 @@ def custom_thresholds_file(tmp_path: Path) -> Path:
                 "embedding_disagreement_similarity: 0.35",
                 "embedding_max_references: 4",
                 "hop_implausible_penalty: 0.25",
+                "path_node_inclusion_bonus: 0.20",
+                "path_gap_edge_penalty: 0.40",
+                "path_ambiguity_margin_min: 0.10",
+                "path_weakest_link_tolerance: 0.10",
                 "",
             ]
         ),

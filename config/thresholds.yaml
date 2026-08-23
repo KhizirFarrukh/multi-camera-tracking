@@ -101,6 +101,61 @@ embedding_disagreement_similarity: 0.4
 # Reference embeddings retained per target after pruning.
 embedding_max_references: 8
 
+# --- Path reconstruction (stage 08) ----------------------------------------
+
+# Score added for each sighting the optimal path includes.
+#
+# MEASURED, and the measurement contradicted the prior. The contract expected a
+# positive bonus to stop the engine returning short confident fragments. The
+# sweep in docs/PATH_RECONSTRUCTION.md shows it is unnecessary and actively
+# harmful:
+#
+#   * Unnecessary, because hop weights are multiplicative. A well-supported hop
+#     contributes roughly 0.8, so extending a route is already worth far more
+#     than stopping. Clean, realistic, and sparse_coverage all reconstruct their
+#     full routes exactly at a bonus of zero.
+#   * Harmful, because a per-node bonus is a fixed payment for including a node
+#     whatever the evidence behind it. At 0.05 the engine chains decoy sightings
+#     into the adversarial route and stops flagging it ambiguous -- it becomes
+#     confidently wrong, which is the one outcome the whole design exists to
+#     avoid.
+#
+# Left configurable rather than removed: a deployment whose matcher produces
+# systematically weaker scores may need it, and it should be swept there too.
+path_node_inclusion_bonus: 0.0
+
+# Score removed from a hop that has to cross unmonitored ground -- no direct
+# link, and no indirect route that fits the time available.
+#
+# MEASURED. The scale is set by the topology's unlinked plausibility floor
+# (0.1): a gap hop between two confident matches is worth 0.9 x 0.9 x 0.1 =
+# 0.081 before the penalty, so the penalty is what decides whether such a hop
+# can ever be taken.
+#
+#   * 0.05 leaves it at +0.031 -- a strongly supported vehicle still bridges an
+#     unmonitored district, which is what skip edges exist for.
+#   * The same penalty makes a weak pair (0.45 x 0.45 x 0.1 = 0.020) negative,
+#     so a route does not reach across unmonitored ground to collect a
+#     candidate that appearance alone put forward.
+#   * Raising it to 0.50 buys ~4 points of precision on adversarial data and
+#     costs the skip-edge behaviour entirely. The sweep table records both.
+path_gap_edge_penalty: 0.05
+
+# Normalized score margin below which the best and second-best paths are treated
+# as indistinguishable, and the alternatives are surfaced instead of one answer.
+# Presenting a coin flip as a certainty is the failure mode this exists to
+# prevent.
+path_ambiguity_margin_min: 0.05
+
+# How far a trajectory's overall confidence may exceed its weakest hop.
+#
+# A chain is not stronger than its weakest link. The geometric mean alone would
+# report 0.46 for a route containing a 0.10 hop, which reads as "moderate" when
+# one link is barely evidence at all. The aggregate is therefore capped at the
+# weakest hop plus this allowance -- the allowance exists because corroborating
+# strong hops do carry some information, not none.
+path_weakest_link_tolerance: 0.05
+
 # Multiplier applied to a hop's confidence when the elapsed time between two
 # sightings falls outside the CameraLink travel-time window. The hop is
 # penalised, not discarded: an implausible transit may still be real (a detour,

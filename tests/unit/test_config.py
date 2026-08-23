@@ -223,6 +223,10 @@ def test_settings__empty_thresholds_file__reports_missing_thresholds(tmp_path: P
         "embedding_disagreement_similarity",
         "embedding_max_references",
         "hop_implausible_penalty",
+        "path_node_inclusion_bonus",
+        "path_gap_edge_penalty",
+        "path_ambiguity_margin_min",
+        "path_weakest_link_tolerance",
     }
 
 
@@ -315,6 +319,10 @@ def test_threshold_settings__inverted_review_band__is_rejected() -> None:
             embedding_disagreement_similarity=0.4,
             embedding_max_references=8,
             hop_implausible_penalty=0.5,
+            path_node_inclusion_bonus=0.25,
+            path_gap_edge_penalty=0.35,
+            path_ambiguity_margin_min=0.05,
+            path_weakest_link_tolerance=0.05,
         )
 
 
@@ -343,6 +351,10 @@ def test_threshold_settings__visual_ceiling_reaching_plate_scores__is_rejected()
             embedding_disagreement_similarity=0.4,
             embedding_max_references=8,
             hop_implausible_penalty=0.5,
+            path_node_inclusion_bonus=0.25,
+            path_gap_edge_penalty=0.35,
+            path_ambiguity_margin_min=0.05,
+            path_weakest_link_tolerance=0.05,
         )
 
 
