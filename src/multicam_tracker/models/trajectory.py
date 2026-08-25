@@ -12,13 +12,22 @@ trajectory).
 from __future__ import annotations
 
 import uuid
+from enum import StrEnum
+from typing import Any
 
 from pydantic import Field, model_validator
 
 from multicam_tracker.models.base import MCTBaseModel, UtcDatetime
 from multicam_tracker.models.sighting import Sighting
 
-__all__ = ["CoverageGap", "Trajectory", "TrajectoryHop"]
+__all__ = [
+    "CoverageGap",
+    "TemporalCaveat",
+    "TemporalIntegrity",
+    "TemporalSeverity",
+    "Trajectory",
+    "TrajectoryHop",
+]
 
 
 class TrajectoryHop(MCTBaseModel):
@@ -72,6 +81,79 @@ class CoverageGap(MCTBaseModel):
     reason: str = Field(min_length=1, description="Why this stretch was flagged")
 
 
+class TemporalSeverity(StrEnum):
+    """How badly a timing problem undermines a route.
+
+    ``StrEnum`` rather than the ``(str, Enum)`` used in
+    :mod:`multicam_tracker.models.enums`: that form was specified verbatim for
+    the contract's canonical entities, this enum is a stage 09 addition, and
+    ``StrEnum`` is what the project's lint rules prefer.
+    """
+
+    INFO = "info"
+    """Worth stating; the route stands."""
+
+    WARNING = "warning"
+    """The route may be wrong in ways the confidence score does not capture."""
+
+    BLOCKING = "blocking"
+    """Hop ordering itself is unreliable. A route built from this is not evidence."""
+
+
+class TemporalCaveat(MCTBaseModel):
+    """One reason the timestamps behind a route may not be comparable."""
+
+    code: str = Field(
+        min_length=1,
+        description="stale_verification | drift_alert | low_reliability_source | offset_spread",
+    )
+    severity: TemporalSeverity
+    camera_id: str | None = Field(
+        default=None, description="The camera at fault, when the caveat names one"
+    )
+    detail: str = Field(min_length=1, description="Human-readable explanation for an operator")
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class TemporalIntegrity(MCTBaseModel):
+    """The verdict on whether a route's timestamps can be trusted.
+
+    Attached to the trajectory rather than logged, because an operator reading a
+    route needs to see the caveat beside it. A warning that lives only in a log
+    file is a warning nobody acts on.
+    """
+
+    verified: bool = Field(
+        description="True when every camera in the query passed with no caveats at all"
+    )
+    checked_camera_ids: list[str] = Field(default_factory=list)
+    caveats: list[TemporalCaveat] = Field(default_factory=list)
+
+    @property
+    def is_blocking(self) -> bool:
+        """Return whether any caveat makes the route unusable as evidence."""
+        return any(caveat.severity is TemporalSeverity.BLOCKING for caveat in self.caveats)
+
+    @property
+    def worst_severity(self) -> TemporalSeverity | None:
+        """Return the most serious caveat's severity, or ``None`` when clean."""
+        order = [TemporalSeverity.BLOCKING, TemporalSeverity.WARNING, TemporalSeverity.INFO]
+        for severity in order:
+            if any(caveat.severity is severity for caveat in self.caveats):
+                return severity
+        return None
+
+    def summary(self) -> str:
+        """Return a one-line summary for a trajectory listing.
+
+        Returns:
+            A sentence an operator can act on.
+        """
+        if self.verified:
+            return "clock verification is current for every camera on this route"
+        return "; ".join(caveat.detail for caveat in self.caveats)
+
+
 class Trajectory(MCTBaseModel):
     """The ordered sequence of a target's sightings plus the hops between them."""
 
@@ -85,6 +167,23 @@ class Trajectory(MCTBaseModel):
     start_time_utc: UtcDatetime
     end_time_utc: UtcDatetime
     gaps: list[CoverageGap] = Field(default_factory=list)
+    requires_recomputation: bool = Field(
+        default=False,
+        description=(
+            "Set when a camera's clock offset changed after this route was assembled. "
+            "The sightings underneath it have moved, so the conclusion no longer follows "
+            "from the evidence -- and an operator cannot be expected to work out which "
+            "routes were affected by hand."
+        ),
+    )
+    temporal_integrity: TemporalIntegrity | None = Field(
+        default=None,
+        description=(
+            "The stage 09 verdict on whether these timestamps are comparable. None when "
+            "the route was assembled without checking, which is itself worth knowing: "
+            "an unchecked route is not the same as a verified one."
+        ),
+    )
 
     @model_validator(mode="after")
     def _sightings_are_strictly_ascending(self) -> Trajectory:

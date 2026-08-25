@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Select, delete, func, select
+from sqlalchemy import Select, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from multicam_tracker.db.folding import fold_plate
@@ -265,6 +265,42 @@ class PostgresSightingRepository(PostgresRepositoryBase):
             EmbeddingMatch(sighting=sighting_to_domain(row[0]), similarity=1.0 - float(row[1]))
             for row in rows
         ]
+
+    def apply_clock_offset(self, camera_id: str, new_offset_ms: int) -> int:
+        """Recompute every stored sighting for one camera under a new offset.
+
+        Args:
+            camera_id: The camera whose clock is being corrected.
+            new_offset_ms: Milliseconds to add to its raw timestamps.
+
+        Returns:
+            How many rows were rewritten.
+
+        Raises:
+            StorageError: If the write fails.
+        """
+        statement = (
+            update(SightingORM)
+            .where(SightingORM.camera_id == camera_id)
+            .values(
+                # Recomputed from raw_timestamp, never from the current
+                # corrected value: that is the whole of the idempotency
+                # guarantee, and it lives in this one expression.
+                timestamp_utc=SightingORM.raw_timestamp
+                + func.make_interval(0, 0, 0, 0, 0, 0, new_offset_ms / 1000.0),
+                clock_offset_applied_ms=new_offset_ms,
+            )
+        )
+
+        with storage_errors(
+            "clock offset rewrite", camera_id=camera_id, new_offset_ms=new_offset_ms
+        ):
+            result = self._session.execute(statement)
+
+        # CursorResult carries rowcount; the base Result type does not declare
+        # it, and an UPDATE always produces the former.
+        rewritten = getattr(result, "rowcount", 0)
+        return max(0, int(rewritten))
 
     def count_by_camera_hour(self, window: TimeWindow) -> list[CameraHourCount]:
         """Return per-camera, per-UTC-hour counts within a window.

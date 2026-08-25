@@ -29,7 +29,14 @@ from multicam_tracker.models.sighting import (
 )
 from multicam_tracker.models.target import Target
 from multicam_tracker.models.timewindow import TimeWindow
-from multicam_tracker.models.trajectory import CoverageGap, Trajectory, TrajectoryHop
+from multicam_tracker.models.trajectory import (
+    CoverageGap,
+    TemporalCaveat,
+    TemporalIntegrity,
+    TemporalSeverity,
+    Trajectory,
+    TrajectoryHop,
+)
 
 __all__ = [
     "BBOX_LENGTH",
@@ -49,6 +56,9 @@ __all__ = [
     "Sighting",
     "SourceType",
     "Target",
+    "TemporalCaveat",
+    "TemporalIntegrity",
+    "TemporalSeverity",
     "TimeWindow",
     "Trajectory",
     "TrajectoryHop",

@@ -56,6 +56,7 @@ __all__ = [
     "StorageSettings",
     "ThresholdSettings",
     "ThresholdsYamlSource",
+    "TimeSyncSettings",
     "TopologySettings",
     "VisionSettings",
     "default_thresholds_file",
@@ -293,6 +294,61 @@ class ThresholdSettings(_StrictSection):
         return self
 
 
+class TimeSyncSettings(_StrictSection):
+    """Clock offset, drift, and temporal integrity policy (stage 09).
+
+    The premise of the whole system is that timestamps from independent cameras
+    are comparable. These values decide when that premise stops being taken on
+    trust.
+    """
+
+    verification_staleness_hours: float = Field(
+        default=168.0,
+        gt=0.0,
+        description=(
+            "How long a camera's clock verification stays good for. A week by default: "
+            "long enough not to nag, short enough that a camera drifting since its last "
+            "check is caught before a month of routes are built on it."
+        ),
+    )
+    drift_alert_ms: float = Field(
+        default=2000.0,
+        gt=0.0,
+        description=(
+            "Constant offset magnitude that raises an alert. Two seconds is well below "
+            "the smallest plausible travel time in a typical topology, so an alert fires "
+            "long before hop ordering itself becomes unreliable."
+        ),
+    )
+    drift_rate_alert_ms_per_hour: float = Field(
+        default=500.0,
+        gt=0.0,
+        description="Fitted drift rate that raises an alert, independent of current magnitude",
+    )
+    min_reference_passes: int = Field(
+        default=3,
+        ge=2,
+        description=(
+            "Fewest reference passes per camera before an offset estimate is emitted. "
+            "Below this the system is underdetermined and the estimator refuses rather "
+            "than returning an arbitrary solution."
+        ),
+    )
+    watermark_lateness_sec: float = Field(
+        default=120.0,
+        ge=0.0,
+        description="How far behind the watermark a live record may arrive and still be accepted",
+    )
+    block_on_drift_alert: bool = Field(
+        default=False,
+        description=(
+            "Whether an active drift alert refuses reconstruction outright rather than "
+            "attaching a caveat. Off by default: a flagged route an operator can weigh "
+            "is more useful than no route, and the caveat travels with the trajectory."
+        ),
+    )
+
+
 class PathingSettings(_StrictSection):
     """Operational knobs for trajectory reconstruction (stage 08).
 
@@ -467,6 +523,7 @@ class Settings(BaseSettings):
     vision: VisionSettings = Field(default_factory=VisionSettings)
     topology: TopologySettings = Field(default_factory=TopologySettings)
     pathing: PathingSettings = Field(default_factory=PathingSettings)
+    timesync: TimeSyncSettings = Field(default_factory=TimeSyncSettings)
     thresholds: ThresholdSettings
     retention: RetentionSettings = Field(default_factory=RetentionSettings)
     api: ApiSettings = Field(default_factory=ApiSettings)

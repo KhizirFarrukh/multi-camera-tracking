@@ -28,6 +28,7 @@ from multicam_tracker.models import (
     CoverageGap,
     MatchCandidate,
     Sighting,
+    TemporalIntegrity,
     Trajectory,
     TrajectoryHop,
 )
@@ -136,6 +137,7 @@ def reconstruct_trajectory(
     gap_penalty: float | None = None,
     confidence_strategy: ConfidenceStrategy = ConfidenceStrategy.GEOMETRIC_MEAN,
     prepared: list[PreparedCandidate] | None = None,
+    temporal_integrity: TemporalIntegrity | None = None,
 ) -> ReconstructionResult:
     """Reconstruct the most plausible route for one target.
 
@@ -158,6 +160,11 @@ def reconstruct_trajectory(
         confidence_strategy: How hop confidences aggregate.
         prepared: Pre-prepared candidates, used by incremental extension to
             avoid redoing the filtering. Bypasses ``candidates`` entirely.
+        temporal_integrity: The stage 09 verdict on whether these cameras'
+            timestamps are comparable. Carried onto the trajectory rather than
+            logged, because an operator reading a route has to see the caveat
+            beside it. ``None`` means the route was assembled without checking,
+            which is a different claim from "checked and clean".
 
     Returns:
         The reconstruction, including an absent trajectory when nothing
@@ -187,6 +194,7 @@ def reconstruct_trajectory(
         k_alternatives=k_alternatives,
         inclusion_bonus=inclusion_bonus,
         confidence_strategy=confidence_strategy,
+        temporal_integrity=temporal_integrity,
     )
 
 
@@ -201,6 +209,7 @@ def assemble_result(
     k_alternatives: int | None = None,
     inclusion_bonus: float | None = None,
     confidence_strategy: ConfidenceStrategy = ConfidenceStrategy.GEOMETRIC_MEAN,
+    temporal_integrity: TemporalIntegrity | None = None,
 ) -> ReconstructionResult:
     """Turn a chosen route into the trajectory and everything that explains it.
 
@@ -218,6 +227,7 @@ def assemble_result(
         k_alternatives: How many alternative routes to enumerate.
         inclusion_bonus: Per-sighting bonus. Defaults to config.
         confidence_strategy: How hop confidences aggregate.
+        temporal_integrity: The stage 09 verdict, carried onto the trajectory.
 
     Returns:
         The complete reconstruction.
@@ -244,6 +254,7 @@ def assemble_result(
         start_time_utc=route[0].sighting.timestamp_utc,
         end_time_utc=route[-1].sighting.timestamp_utc,
         gaps=[report.gap for report in gap_reports],
+        temporal_integrity=temporal_integrity,
     )
 
     movement = summarize_movement(route, cameras) if cameras is not None else MovementSummary()

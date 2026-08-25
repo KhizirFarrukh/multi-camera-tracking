@@ -25,6 +25,7 @@ __all__ = [
     "MulticamTrackerError",
     "PathReconstructionError",
     "StorageError",
+    "TemporalIntegrityError",
     "TopologyError",
     "ValidationError",
     "VisionError",
@@ -108,6 +109,17 @@ class VisionError(MulticamTrackerError):
 
 class PathReconstructionError(MulticamTrackerError):
     """A trajectory could not be assembled from the supplied sightings (stage 08)."""
+
+
+class TemporalIntegrityError(MulticamTrackerError):
+    """Timestamps across the queried cameras cannot be trusted to be comparable.
+
+    Raised by the stage 09 gate before path reconstruction. Its own class rather
+    than a ``ValidationError`` because a caller does something different about
+    it: the data is well-formed, and what failed is the assumption every hop
+    ordering rests on. A route assembled from unverifiable time is confidently
+    wrong in a way no downstream logic can detect.
+    """
 
 
 class AuthorizationError(MulticamTrackerError):

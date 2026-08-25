@@ -35,6 +35,7 @@ from multicam_tracker.models import (
     ReviewStatus,
     Sighting,
     Target,
+    TemporalIntegrity,
     Trajectory,
     TrajectoryHop,
 )
@@ -372,6 +373,12 @@ def trajectory_to_orm(trajectory: Trajectory) -> tuple[TrajectoryORM, list[Traje
         start_time_utc=trajectory.start_time_utc,
         end_time_utc=trajectory.end_time_utc,
         gaps=[gap.to_json_dict() for gap in trajectory.gaps],
+        temporal_integrity=(
+            trajectory.temporal_integrity.to_json_dict()
+            if trajectory.temporal_integrity is not None
+            else None
+        ),
+        requires_recomputation=trajectory.requires_recomputation,
     )
 
     hops = [
@@ -433,6 +440,12 @@ def trajectory_to_domain(
         start_time_utc=row.start_time_utc,
         end_time_utc=row.end_time_utc,
         gaps=[CoverageGap.from_json_dict(gap) for gap in row.gaps],
+        temporal_integrity=(
+            TemporalIntegrity.from_json_dict(row.temporal_integrity)
+            if row.temporal_integrity is not None
+            else None
+        ),
+        requires_recomputation=row.requires_recomputation,
     )
 
 

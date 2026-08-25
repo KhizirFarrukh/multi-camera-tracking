@@ -358,6 +358,30 @@ class SightingRepository(Protocol):
         """
         ...
 
+    def apply_clock_offset(self, camera_id: str, new_offset_ms: int) -> int:
+        """Recompute every stored sighting for one camera under a new offset.
+
+        Corrected timestamps are recomputed from ``raw_timestamp`` rather than
+        shifted from their current value, which is what makes running this twice
+        harmless -- and what stops a second correction landing somewhere no
+        record explains.
+
+        One statement, so the rewrite is atomic within the caller's transaction:
+        a failure part-way through leaves no camera half-corrected, which would
+        be worse than leaving it uncorrected.
+
+        Args:
+            camera_id: The camera whose clock is being corrected.
+            new_offset_ms: Milliseconds to add to its raw timestamps from now on.
+
+        Returns:
+            How many rows were rewritten.
+
+        Raises:
+            StorageError: If the write fails.
+        """
+        ...
+
     def delete_older_than(self, cutoff_utc: datetime) -> PurgeResult:
         """Delete sightings created strictly before ``cutoff_utc``.
 
@@ -562,6 +586,25 @@ class TrajectoryRepository(Protocol):
                 trajectory cannot be rebuilt faithfully, and returning a
                 shortened route would misrepresent the evidence, so the error
                 names the missing ids.
+        """
+        ...
+
+    def flag_for_recomputation(self, camera_id: str) -> list[str]:
+        """Mark every trajectory that used one camera as needing recomputation.
+
+        Called after that camera's clock offset changes. The sightings under
+        those routes have moved, so the conclusions no longer follow from the
+        evidence -- and the stored bounds no longer match the sightings they
+        name, which is why they are flagged rather than quietly re-served.
+
+        Args:
+            camera_id: The camera whose clock was corrected.
+
+        Returns:
+            The ids of the trajectories that were flagged.
+
+        Raises:
+            StorageError: If the write fails.
         """
         ...
 

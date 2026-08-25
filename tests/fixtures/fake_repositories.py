@@ -505,6 +505,26 @@ class InMemorySightingRepository:
         scored.sort(key=lambda match: (-match.similarity, match.sighting.sighting_id))
         return scored[:k]
 
+    def apply_clock_offset(self, camera_id: str, new_offset_ms: int) -> int:
+        """Recompute every stored sighting for one camera under a new offset.
+
+        Args:
+            camera_id: The camera whose clock is being corrected.
+            new_offset_ms: Milliseconds to add to its raw timestamps.
+
+        Returns:
+            How many sightings were rewritten.
+        """
+        from multicam_tracker.timesync import correct_sighting
+
+        rewritten = 0
+        for sighting_id, sighting in list(self._store.sightings.items()):
+            if sighting.camera_id != camera_id:
+                continue
+            self._store.sightings[sighting_id] = correct_sighting(sighting, new_offset_ms)
+            rewritten += 1
+        return rewritten
+
     def count_by_camera_hour(self, window: TimeWindow) -> list[CameraHourCount]:
         """Return per-camera, per-UTC-hour counts.
 
@@ -734,6 +754,25 @@ class InMemoryTrajectoryRepository:
         if trajectory is None:
             return None
         return self._resolve(trajectory)
+
+    def flag_for_recomputation(self, camera_id: str) -> list[str]:
+        """Mark every trajectory that used one camera as needing recomputation.
+
+        Args:
+            camera_id: The camera whose clock was corrected.
+
+        Returns:
+            The ids of the trajectories that were flagged.
+        """
+        flagged: list[str] = []
+        for trajectory_id, trajectory in list(self._store.trajectories.items()):
+            if not any(sighting.camera_id == camera_id for sighting in trajectory.sightings):
+                continue
+            self._store.trajectories[trajectory_id] = trajectory.model_copy(
+                update={"requires_recomputation": True}
+            )
+            flagged.append(trajectory_id)
+        return sorted(flagged)
 
     def list_for_target(self, target_id: str) -> list[Trajectory]:
         """Return a target's trajectories, newest first.

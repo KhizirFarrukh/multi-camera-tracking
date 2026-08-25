@@ -328,6 +328,12 @@ class TrajectoryORM(Base):
     gaps: Mapped[list[dict[str, Any]]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
+    # Nullable on purpose: NULL means "never checked", which is a different
+    # claim from "checked and clean" and must not be collapsed into it.
+    temporal_integrity: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    requires_recomputation: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
 
     __table_args__ = (
         CheckConstraint(

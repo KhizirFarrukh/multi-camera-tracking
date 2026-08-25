@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.dialects import postgresql
 
 from multicam_tracker.db.mappers import (
     sighting_to_domain,
@@ -69,6 +70,41 @@ class PostgresTrajectoryRepository(PostgresRepositoryBase):
             if row is None:
                 return None
             return self._rebuild(row)
+
+    def flag_for_recomputation(self, camera_id: str) -> list[str]:
+        """Mark every trajectory that used one camera as needing recomputation.
+
+        Args:
+            camera_id: The camera whose clock was corrected.
+
+        Returns:
+            The ids of the trajectories that were flagged.
+
+        Raises:
+            StorageError: If the write fails.
+        """
+        # The camera's sightings, aggregated into one array so the overlap test
+        # is a single expression. coalesce keeps a camera with no sightings from
+        # producing NULL, which would match nothing *and* look like an error.
+        affected = (
+            select(func.coalesce(func.array_agg(SightingORM.sighting_id), postgresql.array([])))
+            .where(SightingORM.camera_id == camera_id)
+            .scalar_subquery()
+        )
+        statement = (
+            update(TrajectoryORM)
+            # Array overlap: a trajectory is affected if any sighting it names
+            # came from this camera. One statement, so the flag lands atomically
+            # with whatever else the caller's transaction is doing.
+            .where(TrajectoryORM.sighting_ids.overlap(affected))
+            .values(requires_recomputation=True)
+            .returning(TrajectoryORM.trajectory_id)
+        )
+
+        with storage_errors("flagging trajectories for recomputation", camera_id=camera_id):
+            rows = self._session.execute(statement).scalars().all()
+
+        return [str(value) for value in rows]
 
     def list_for_target(self, target_id: str) -> list[Trajectory]:
         """Return a target's trajectories, newest first.
