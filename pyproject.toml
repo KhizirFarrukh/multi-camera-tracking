@@ -46,6 +46,10 @@ dependencies = [
 # paddle build cannot block work on any other stage.
 vision = [
   "opencv-python>=4.10,<5",
+  # PyAV is the fallback decoder (stage 10): it reads exact rational frame
+  # rates and per-frame presentation timestamps, which OpenCV does not expose
+  # and which a variable-rate recording needs to be placed in time at all.
+  "av>=12,<16",
   "ultralytics>=8.3,<9",
   "paddlepaddle>=2.6,<4",
   "paddleocr>=2.8,<4",

@@ -50,6 +50,7 @@ from multicam_tracker.exceptions import ConfigurationError
 __all__ = [
     "ApiSettings",
     "DatabaseSettings",
+    "IngestSettings",
     "PathingSettings",
     "RetentionSettings",
     "Settings",
@@ -294,6 +295,65 @@ class ThresholdSettings(_StrictSection):
         return self
 
 
+class IngestSettings(_StrictSection):
+    """Frame sampling, motion gating, and live buffering (stage 10).
+
+    The defaults encode the stage's two standing trades: sample at a rate a
+    detector can keep up with rather than at whatever the camera produces, and
+    on a live source prefer the newest frame to a complete record of an
+    increasingly stale past.
+    """
+
+    target_fps: float = Field(
+        default=5.0,
+        gt=0.0,
+        description=(
+            "Detection cadence. Five a second sees every vehicle that passes at "
+            "urban speeds while costing a sixth of a 30 fps camera's frames."
+        ),
+    )
+    motion_sensitivity: float = Field(
+        default=2.0,
+        ge=0.0,
+        description=(
+            "Mean greyscale difference above which a frame counts as changed. "
+            "Tuned above sensor noise and below a vehicle entering frame."
+        ),
+    )
+    motion_force_interval_sec: float = Field(
+        default=5.0,
+        gt=0.0,
+        description=(
+            "Longest a frame may go unsampled however static the scene. This is what "
+            "keeps a parked vehicle in the record: a car that stops being detected "
+            "looks exactly like a car that drove away."
+        ),
+    )
+    live_buffer_frames: int = Field(
+        default=8,
+        ge=1,
+        description=(
+            "Frames held between a live decoder and its consumer. Small on purpose: "
+            "a deep buffer trades the latency a live view exists for against a "
+            "completeness nobody watching can use."
+        ),
+    )
+    live_read_timeout_sec: float = Field(
+        default=10.0,
+        gt=0.0,
+        description="How long a stream may go quiet before it is treated as dead",
+    )
+    max_queued_frames: int = Field(
+        default=64,
+        ge=1,
+        description=(
+            "Frames the multi-source reader may hold across all cameras. Bounds "
+            "memory: the queue holds decoded images, and an unbounded one is a leak "
+            "with a slow consumer attached."
+        ),
+    )
+
+
 class TimeSyncSettings(_StrictSection):
     """Clock offset, drift, and temporal integrity policy (stage 09).
 
@@ -522,6 +582,7 @@ class Settings(BaseSettings):
     storage: StorageSettings = Field(default_factory=StorageSettings)
     vision: VisionSettings = Field(default_factory=VisionSettings)
     topology: TopologySettings = Field(default_factory=TopologySettings)
+    ingest: IngestSettings = Field(default_factory=IngestSettings)
     pathing: PathingSettings = Field(default_factory=PathingSettings)
     timesync: TimeSyncSettings = Field(default_factory=TimeSyncSettings)
     thresholds: ThresholdSettings

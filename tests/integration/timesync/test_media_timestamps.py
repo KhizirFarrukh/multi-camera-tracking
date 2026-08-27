@@ -62,17 +62,31 @@ def test_a_filename_inside_the_dst_fall_back_hour__refuses_to_pick_a_reading() -
         source.timestamp_for(0)
 
 
-def test_every_committed_fixture__is_covered_by_a_test() -> None:
-    """A fixture nobody reads is a fixture that quietly stops being right."""
-    committed = {path.name for path in MEDIA_DIR.iterdir() if path.suffix != ".md"}
+def test_every_filename_fixture__is_covered_by_a_test() -> None:
+    """A fixture nobody reads is a fixture that quietly stops being right.
+
+    Scoped to the ``cam_*`` names: stage 10 shares this directory for its
+    decodable sample clips, which are covered by their own suite.
+    """
+    committed = {
+        path.name
+        for path in MEDIA_DIR.iterdir()
+        if path.suffix != ".md" and path.name.startswith("cam_")
+    }
 
     assert committed == {
         "cam_01_20260810_142211.mp4",
         "cam_03-2026-08-10T14-22-11.mkv",
-        "recording_2026_08_10_14_22_11.avi",
-        "front_door_clip.mp4",
         "cam_07_20261025_013000.mp4",
     }
+
+
+def test_the_non_prefixed_fixtures__are_the_ones_this_suite_names() -> None:
+    """The two that carry no camera prefix are still named here explicitly."""
+    committed = {path.name for path in MEDIA_DIR.iterdir() if path.suffix != ".md"}
+
+    assert "recording_2026_08_10_14_22_11.avi" in committed
+    assert "front_door_clip.mp4" in committed
 
 
 # ---------------------------------------------------------------------------
