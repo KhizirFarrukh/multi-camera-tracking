@@ -176,6 +176,18 @@ already validated.
 Full stage map: [coding-agent-prompts/README.md](coding-agent-prompts/README.md).
 Architecture detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 Requested capabilities not yet in the staged plan: [docs/FEATURE_BACKLOG.md](docs/FEATURE_BACKLOG.md).
+
+## Picking this up
+
+Start at **[HANDOFF.md](HANDOFF.md)** — where the work stands, and what to do
+next. From there:
+
+| document | answers |
+|---|---|
+| [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) | what each finished stage delivered and measured |
+| [docs/TODO.md](docs/TODO.md) | what is left, including debts that are not stages |
+| [docs/WORKING_AGREEMENT.md](docs/WORKING_AGREEMENT.md) | protocol, environment traps, commands |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | settled decisions and fixed bugs -- do not re-litigate |
 Working conventions: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
