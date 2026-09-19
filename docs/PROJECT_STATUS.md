@@ -30,7 +30,7 @@ model weights.
 | `32be503` | 09 — time synchronization and temporal integrity | 2026-08-25 |
 | `61ba055` | 10 — video ingestion, sampling, frame sources | 2026-08-27 |
 | `fdf7e3a` | docs — handoff pack | 2026-09-18 |
-| _pending_ | 11 — vehicle detection and single-camera tracking | 2026-09-19 |
+| `b841dde` | 11 — vehicle detection and single-camera tracking | 2026-09-19 |
 
 ---
 
