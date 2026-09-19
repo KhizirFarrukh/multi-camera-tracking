@@ -40,6 +40,12 @@ spec.
 Plus [`docs/FEATURE_BACKLOG.md`](docs/FEATURE_BACKLOG.md), which records
 capabilities the user asked for that are **not** in the 20-stage plan.
 
+And [`docs/session-archives/`](docs/session-archives/), one file per working
+session: what was asked, what was built, what went wrong, and why each
+non-obvious decision went the way it did. Those are **history** -- read this
+file first for the current state, and go there when you want the reasoning
+behind something rather than the fact of it.
+
 ---
 
 ## The standing instruction from the user

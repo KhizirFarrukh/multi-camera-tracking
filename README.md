@@ -193,6 +193,7 @@ next. From there:
 | [docs/TODO.md](docs/TODO.md) | what is left, including debts that are not stages |
 | [docs/WORKING_AGREEMENT.md](docs/WORKING_AGREEMENT.md) | protocol, environment traps, commands |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | settled decisions and fixed bugs -- do not re-litigate |
+| [docs/session-archives/](docs/session-archives/) | per-session records: the reasoning, and what was tried and failed |
 Working conventions: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
