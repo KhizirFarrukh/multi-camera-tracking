@@ -1,0 +1,379 @@
+{
+  "format_version": 1,
+  "model_id": "reference-blob",
+  "model_version": "1.0",
+  "note": "Recorded with tests.fixtures.vision.ReferenceBlobDetector, NOT with YOLO. No model weights were available in the environment where this was recorded. The blob detector finds the bright rectangle the sample clips draw; it would find nothing in real footage. Re-record with --backend yolo once weights exist (see docs/DETECTION.md).",
+  "recorded_at": "2026-09-19T14:16:13.162659+00:00",
+  "sources": {
+    "sample_clean.mp4": {
+      "frame_count": 20,
+      "frames": {
+        "0": [
+          {
+            "bbox": [
+              0,
+              16,
+              12,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "1": [
+          {
+            "bbox": [
+              3,
+              16,
+              15,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "10": [
+          {
+            "bbox": [
+              30,
+              16,
+              42,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "11": [
+          {
+            "bbox": [
+              33,
+              16,
+              45,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "12": [
+          {
+            "bbox": [
+              36,
+              16,
+              48,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "13": [
+          {
+            "bbox": [
+              39,
+              16,
+              51,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "14": [
+          {
+            "bbox": [
+              42,
+              16,
+              54,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "15": [
+          {
+            "bbox": [
+              45,
+              16,
+              57,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "16": [
+          {
+            "bbox": [
+              48,
+              16,
+              60,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "17": [
+          {
+            "bbox": [
+              51,
+              16,
+              63,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "18": [
+          {
+            "bbox": [
+              2,
+              16,
+              14,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "19": [
+          {
+            "bbox": [
+              5,
+              16,
+              17,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "2": [
+          {
+            "bbox": [
+              6,
+              16,
+              18,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "3": [
+          {
+            "bbox": [
+              9,
+              16,
+              21,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "4": [
+          {
+            "bbox": [
+              12,
+              16,
+              24,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "5": [
+          {
+            "bbox": [
+              15,
+              16,
+              27,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "6": [
+          {
+            "bbox": [
+              18,
+              16,
+              30,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "7": [
+          {
+            "bbox": [
+              21,
+              16,
+              33,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "8": [
+          {
+            "bbox": [
+              24,
+              16,
+              36,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "9": [
+          {
+            "bbox": [
+              27,
+              16,
+              39,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ]
+      }
+    },
+    "sample_vfr.mp4": {
+      "frame_count": 10,
+      "frames": {
+        "0": [
+          {
+            "bbox": [
+              0,
+              16,
+              12,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "1": [
+          {
+            "bbox": [
+              3,
+              16,
+              15,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "2": [
+          {
+            "bbox": [
+              6,
+              16,
+              18,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "3": [
+          {
+            "bbox": [
+              9,
+              16,
+              21,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "4": [
+          {
+            "bbox": [
+              12,
+              16,
+              24,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "5": [
+          {
+            "bbox": [
+              15,
+              16,
+              27,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "6": [
+          {
+            "bbox": [
+              18,
+              16,
+              30,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "7": [
+          {
+            "bbox": [
+              21,
+              16,
+              33,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "8": [
+          {
+            "bbox": [
+              24,
+              16,
+              36,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ],
+        "9": [
+          {
+            "bbox": [
+              27,
+              16,
+              39,
+              32
+            ],
+            "confidence": 1.0,
+            "object_class": "car"
+          }
+        ]
+      }
+    }
+  }
+}

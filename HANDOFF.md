@@ -3,8 +3,8 @@
 This file exists so that a new agent session, with no memory of the previous
 conversation, can pick this project up and continue correctly.
 
-**Current position: stages 00–10 are complete and committed. Stage 11 (vehicle
-detection) is next, and is not started.**
+**Current position: stages 00–11 are complete and committed. Stage 12 (plate
+detection and OCR) is next, and is not started.**
 
 ---
 
@@ -67,18 +67,19 @@ tests, results, deviations, and assumptions.
    # then the verification command from the working agreement
    ```
 
-3. Read `coding-agent-prompts/11_vehicle_detection.json` in full, plus
+3. Read `coding-agent-prompts/12_plate_detection_ocr.json` in full, plus
    `00_GLOBAL_CONTRACT.json` if you have not.
-4. Wait for the user to say to start. When they do, build stage 11 to the
+4. Wait for the user to say to start. When they do, build stage 12 to the
    contract's standard, commit, report, and stop.
 
 ---
 
 ## The shape of the work so far
 
-Ten stages, ~15,600 lines of source across 97 modules, 83 test modules,
-**1,601 tests passing** and 121 skipped (all of them database tests waiting on
-Docker), 92.85% coverage, `ruff` and `mypy --strict` clean.
+Eleven stages, ~18,700 lines of source across 109 modules, 95 test modules,
+**1,828 tests passing** and 130 skipped, 93.11% coverage, `ruff` and
+`mypy --strict` clean. Of the skips, 121 are database tests waiting on Docker
+and 9 need model weights that are not installed.
 
 The parts that exist:
 
@@ -93,9 +94,9 @@ appearance re-identification            stage 07
 path reconstruction                     stage 08
 time synchronization                    stage 09
 video ingestion                         stage 10
+vehicle detection + tracking            stage 11
 --------------------------------------------------
-vehicle detection                       stage 11  <- next
-plate detection + OCR                   stage 12
+plate detection + OCR                   stage 12  <- next
 re-id embedding extraction              stage 13
 pipeline orchestration                  stage 14
 live processing                         stage 15
@@ -108,8 +109,12 @@ system validation and release           stage 20
 
 Stages 05–10 were deliberately built **before** any computer vision, so the
 matching and pathing engines could be measured against ground truth before real
-video introduced uncertainty about what the right answer even is. Stage 11 is
-where that changes.
+video introduced uncertainty about what the right answer even is.
+
+Stage 11 is where that changed, and the consequence is visible in its thresholds:
+they are the first in this project that are **not measured**. There is no ground
+truth for a detector without a detector, and no model weights are installed here.
+Stage 13 or 20 owns re-deriving them.
 
 ---
 

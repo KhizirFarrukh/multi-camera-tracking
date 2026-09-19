@@ -156,6 +156,85 @@ path_ambiguity_margin_min: 0.05
 # strong hops do carry some information, not none.
 path_weakest_link_tolerance: 0.05
 
+# --- Vehicle detection and tracking (stage 11) -----------------------------
+#
+# NOT MEASURED. Unlike the matching and pathing numbers above, these have not
+# been swept against ground truth, because the only detector available in this
+# environment is a synthetic one and sweeping against it would calibrate the
+# fixture rather than the system. They are documented starting points with a
+# stated reason each, and stage 13 or 20 must re-derive them against a real
+# detector on real footage. Do not cite them as measured.
+
+# Smallest box that is plausibly a vehicle, in source-frame pixels. Below this
+# a detection is a speck: a distant pedestrian, a bird, a compression artifact.
+# 400 px is a 20x20 box, at which no plate is readable and no re-id embedding
+# is worth extracting, so nothing downstream could use it anyway.
+detection_min_bbox_area_px: 400
+
+# Largest box that is plausibly one vehicle, as a fraction of the frame. A
+# detection covering most of the frame is a failed detection -- a lens flare, a
+# lorry side filling the view, or a model that has latched onto the background.
+detection_max_bbox_area_fraction: 0.5
+
+# Width-to-height bounds. A car viewed from the side is about 2.5:1 and from
+# the front about 1.2:1; a motorcycle from behind is about 0.5:1. The window is
+# wider than any of those because a box clipped by the frame edge is legitimately
+# elongated, and rejecting those would discard exactly the vehicles entering and
+# leaving view.
+detection_min_aspect_ratio: 0.25
+detection_max_aspect_ratio: 5.0
+
+# In overlap mode, the fraction of a box that must lie inside the region of
+# interest. Half, so a vehicle straddling the region boundary is attributed to
+# the region it is mostly in rather than dropped by both.
+detection_roi_min_overlap: 0.5
+
+# Minimum IoU between a predicted track box and a detection for the two to be
+# associated. 0.3 is the SORT default and the reasoning carries: at typical
+# urban speeds and a 5 fps sampling cadence a vehicle moves a fraction of its
+# own length between frames, so a genuine continuation overlaps heavily, while
+# 0.3 is still low enough to survive a detector that wobbles by a few pixels.
+track_association_min_iou: 0.3
+
+# Consecutive updates a track may go unmatched before it is terminated. This is
+# the occlusion allowance: a vehicle passing behind a pole disappears for a
+# handful of frames and must come back with the same identity. Counted in
+# tracker updates rather than source frame indices, because the tracker is fed
+# sampled frames and the gap that matters is the gap in what it saw.
+#
+# Too high and two different vehicles get stitched into one track, which is the
+# confident-wrong-answer failure in miniature. Five is about a second at the
+# configured 5 fps cadence.
+track_max_age_frames: 5
+
+# Detections a track needs before it is confirmed and may emit a sighting. Two
+# would admit a pair of consecutive false positives; three requires a detector
+# to be wrong in the same place three times running.
+track_min_hits_to_confirm: 3
+
+# Best-frame ranking weights. Each criterion scores in [0, 1] and the four sum
+# to 1.0, which is enforced at startup -- any other sum puts the composite score
+# outside [0, 1] and makes it unreadable in a review UI.
+#
+# The ordering is the claim: what most determines whether a plate can be read is
+# that the image is sharp and that the detector was sure it was looking at a
+# vehicle. Size matters less than it looks, because a vehicle leaving the frame
+# is large and useless. Centrality is a weak proxy for "not about to be cut off"
+# and is weighted accordingly.
+best_frame_confidence_weight: 0.35
+best_frame_sharpness_weight: 0.30
+best_frame_area_weight: 0.20
+best_frame_centrality_weight: 0.15
+
+# Fraction of the composite score removed when the box touches the frame edge.
+# Half, which is deliberately brutal: a vehicle cut off by the frame is missing
+# part of the very thing the frame would be selected for.
+#
+# Applied as a discount rather than a subtraction so that a track seen only at
+# the frame edge still ranks its own frames meaningfully instead of collapsing
+# them all onto a floor of zero.
+best_frame_edge_penalty: 0.5
+
 # Multiplier applied to a hop's confidence when the elapsed time between two
 # sightings falls outside the CameraLink travel-time window. The hop is
 # penalised, not discarded: an implausible transit may still be real (a detour,

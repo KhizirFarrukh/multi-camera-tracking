@@ -227,6 +227,19 @@ def test_settings__empty_thresholds_file__reports_missing_thresholds(tmp_path: P
         "path_gap_edge_penalty",
         "path_ambiguity_margin_min",
         "path_weakest_link_tolerance",
+        "detection_min_bbox_area_px",
+        "detection_max_bbox_area_fraction",
+        "detection_min_aspect_ratio",
+        "detection_max_aspect_ratio",
+        "detection_roi_min_overlap",
+        "track_association_min_iou",
+        "track_max_age_frames",
+        "track_min_hits_to_confirm",
+        "best_frame_confidence_weight",
+        "best_frame_sharpness_weight",
+        "best_frame_area_weight",
+        "best_frame_centrality_weight",
+        "best_frame_edge_penalty",
     }
 
 
@@ -298,31 +311,73 @@ def test_settings__incomplete_thresholds_yaml__reports_the_missing_threshold(
 # ---------------------------------------------------------------------------
 
 
+def threshold_kwargs(**overrides: object) -> dict[str, object]:
+    """Return a complete, valid set of threshold values with overrides applied.
+
+    Every ThresholdSettings field is required, so constructing one directly
+    means naming all of them. Enumerating that list inside each test made every
+    new threshold a change to every cross-field test, which is churn that hides
+    the one value the test actually cares about.
+
+    Args:
+        **overrides: Values to replace.
+
+    Returns:
+        Keyword arguments for ThresholdSettings.
+    """
+    values: dict[str, object] = {
+        "plate_auto_accept_min_confidence": 0.85,
+        "plate_fuzzy_max_edit_distance": 2,
+        "plate_fuzzy_max_weighted_distance": 0.9,
+        "plate_max_length_delta": 2,
+        "plate_confusion_substitution_cost": 0.5,
+        "plate_exact_method_weight": 1.0,
+        "plate_fuzzy_method_weight": 0.9,
+        "plate_distance_penalty_per_unit": 0.12,
+        "plate_review_min_confidence": 0.5,
+        "embedding_auto_accept_min_similarity": 0.95,
+        "embedding_review_min_similarity": 0.75,
+        "embedding_margin_min": 0.04,
+        "embedding_only_score_ceiling": 0.45,
+        "embedding_agreement_boost": 0.05,
+        "embedding_disagreement_similarity": 0.4,
+        "embedding_max_references": 8,
+        "hop_implausible_penalty": 0.5,
+        "path_node_inclusion_bonus": 0.0,
+        "path_gap_edge_penalty": 0.05,
+        "path_ambiguity_margin_min": 0.05,
+        "path_weakest_link_tolerance": 0.05,
+        "detection_min_bbox_area_px": 400,
+        "detection_max_bbox_area_fraction": 0.5,
+        "detection_min_aspect_ratio": 0.25,
+        "detection_max_aspect_ratio": 5.0,
+        "detection_roi_min_overlap": 0.5,
+        "track_association_min_iou": 0.3,
+        "track_max_age_frames": 5,
+        "track_min_hits_to_confirm": 3,
+        "best_frame_confidence_weight": 0.35,
+        "best_frame_sharpness_weight": 0.30,
+        "best_frame_area_weight": 0.20,
+        "best_frame_centrality_weight": 0.15,
+        "best_frame_edge_penalty": 0.5,
+    }
+    values.update(overrides)
+    return values
+
+
+def test_threshold_settings__committed_defaults__construct_cleanly() -> None:
+    """The helper itself must describe a valid configuration, or it proves nothing."""
+    assert ThresholdSettings(**threshold_kwargs()).plate_review_min_confidence == pytest.approx(0.5)
+
+
 def test_threshold_settings__inverted_review_band__is_rejected() -> None:
     """An auto-accept below the review floor would leave no review band at all."""
     with pytest.raises(PydanticValidationError, match="review band"):
         ThresholdSettings(
-            plate_auto_accept_min_confidence=0.85,
-            plate_fuzzy_max_edit_distance=2,
-            plate_fuzzy_max_weighted_distance=0.9,
-            plate_max_length_delta=2,
-            plate_confusion_substitution_cost=0.5,
-            plate_exact_method_weight=1.0,
-            plate_fuzzy_method_weight=0.9,
-            plate_distance_penalty_per_unit=0.12,
-            plate_review_min_confidence=0.5,
-            embedding_auto_accept_min_similarity=0.60,
-            embedding_review_min_similarity=0.75,
-            embedding_margin_min=0.04,
-            embedding_only_score_ceiling=0.45,
-            embedding_agreement_boost=0.05,
-            embedding_disagreement_similarity=0.4,
-            embedding_max_references=8,
-            hop_implausible_penalty=0.5,
-            path_node_inclusion_bonus=0.25,
-            path_gap_edge_penalty=0.35,
-            path_ambiguity_margin_min=0.05,
-            path_weakest_link_tolerance=0.05,
+            **threshold_kwargs(
+                embedding_auto_accept_min_similarity=0.60,
+                embedding_review_min_similarity=0.75,
+            )
         )
 
 
@@ -333,29 +388,33 @@ def test_threshold_settings__visual_ceiling_reaching_plate_scores__is_rejected()
     guess be presented with the authority of a plate read.
     """
     with pytest.raises(PydanticValidationError, match="outrank a plate match"):
+        ThresholdSettings(**threshold_kwargs(embedding_only_score_ceiling=0.5))
+
+
+def test_threshold_settings__inverted_aspect_window__is_rejected() -> None:
+    """A minimum above the maximum rejects every detection, silently seeing nothing."""
+    with pytest.raises(PydanticValidationError, match="inverted window"):
         ThresholdSettings(
-            plate_auto_accept_min_confidence=0.85,
-            plate_fuzzy_max_edit_distance=2,
-            plate_fuzzy_max_weighted_distance=0.9,
-            plate_max_length_delta=2,
-            plate_confusion_substitution_cost=0.5,
-            plate_exact_method_weight=1.0,
-            plate_fuzzy_method_weight=0.9,
-            plate_distance_penalty_per_unit=0.12,
-            plate_review_min_confidence=0.5,
-            embedding_auto_accept_min_similarity=0.95,
-            embedding_review_min_similarity=0.75,
-            embedding_margin_min=0.04,
-            embedding_only_score_ceiling=0.5,
-            embedding_agreement_boost=0.05,
-            embedding_disagreement_similarity=0.4,
-            embedding_max_references=8,
-            hop_implausible_penalty=0.5,
-            path_node_inclusion_bonus=0.25,
-            path_gap_edge_penalty=0.35,
-            path_ambiguity_margin_min=0.05,
-            path_weakest_link_tolerance=0.05,
+            **threshold_kwargs(
+                detection_min_aspect_ratio=5.0,
+                detection_max_aspect_ratio=0.25,
+            )
         )
+
+
+def test_threshold_settings__aspect_bounds_exactly_equal__are_accepted() -> None:
+    """Boundary: a degenerate but non-inverted window is odd, not invalid."""
+    settings = ThresholdSettings(
+        **threshold_kwargs(detection_min_aspect_ratio=2.0, detection_max_aspect_ratio=2.0)
+    )
+
+    assert settings.detection_min_aspect_ratio == pytest.approx(2.0)
+
+
+def test_threshold_settings__best_frame_weights_not_summing_to_one__are_rejected() -> None:
+    """Weights summing past one put the composite score outside [0, 1]."""
+    with pytest.raises(PydanticValidationError, match=r"must sum to 1.0"):
+        ThresholdSettings(**threshold_kwargs(best_frame_confidence_weight=0.5))
 
 
 def test_threshold_settings__committed_values__satisfy_the_evidence_hierarchy(

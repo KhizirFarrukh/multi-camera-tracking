@@ -4,11 +4,12 @@ What each completed stage delivered, what it measured, and where it departed
 from the plan. Written so a new session can trust the finished work without
 re-reading it.
 
-**Position: stages 00–10 complete. Stage 11 next, not started.**
+**Position: stages 00–11 complete. Stage 12 next, not started.**
 
 All commits are on `develop`. Verification at the last commit: `ruff` clean,
-`mypy --strict` clean across 97 source files, **1,601 tests passing**, 121
-skipped (all Docker-dependent), 92.85% coverage.
+`mypy --strict` clean across 109 source files, **1,828 tests passing**, 130
+skipped, 93.11% coverage. Of the skips, 121 are Docker-dependent and 9 need
+model weights.
 
 ---
 
@@ -28,6 +29,8 @@ skipped (all Docker-dependent), 92.85% coverage.
 | `2ef6bd5` | 08 — trajectory assembly and path reconstruction | 2026-08-23 |
 | `32be503` | 09 — time synchronization and temporal integrity | 2026-08-25 |
 | `61ba055` | 10 — video ingestion, sampling, frame sources | 2026-08-27 |
+| `fdf7e3a` | docs — handoff pack | 2026-09-18 |
+| _pending_ | 11 — vehicle detection and single-camera tracking | 2026-09-19 |
 
 ---
 
@@ -179,6 +182,43 @@ Installed `opencv-python` (already declared in the `vision` extra) and added
 `av` to that extra, so the file and live paths are verified against real
 decoders and a real loopback socket rather than skipped.
 
+## Stage 11 — Vehicle detection and single-camera tracking
+
+`vision/{detector_protocol,filters,best_frames,track,tracker,thumbnails,sightings,fake_detector,fixture_detector,yolo_detector,instrumentation,factory}.py`,
+`scripts/{benchmark_detection,record_detection_fixtures}.py`,
+`tests/fixtures/{vision.py,detections/,images/}`, [`docs/DETECTION.md`](DETECTION.md).
+
+**One vehicle pass produces exactly one sighting**, built from every frame it
+appeared in. Without that, a car crossing one camera at 5 fps is forty sightings
+of forty vehicles as far as everything downstream can tell.
+
+A SORT-style tracker: Kalman prediction plus minimum-cost assignment over IoU.
+Both parts earn their place at the same moment — when two vehicles cross,
+prediction keeps them apart and optimal assignment stops greedy matching pairing
+them the wrong way round. Each is tested directly, the second against a cost
+matrix where greedy is provably wrong.
+
+Memory is bounded by construction: a track keeps a few numbers per frame and a
+cropped image for only its best few, so a vehicle parked in view for ten minutes
+costs kilobytes.
+
+**Not measured.** Every stage 11 threshold is a documented starting point, not a
+swept optimum — the only detector available here is synthetic, and sweeping
+against it would calibrate the fixture. Stage 13 or 20 must re-derive them.
+
+Four things the tests found that reading the code would not have:
+
+- stage 10's rotation inverse can return -1 at the frame boundary (pixel-centre
+  convention against half-open box coordinates); clamped at one pixel, and
+  anything larger still fails loudly;
+- `sample_clean.mp4` contains **two** passes, because its bar wraps from the
+  right edge to the left on frame 18 — and the tracker is right to refuse to
+  stitch a teleport into one track;
+- `SyntheticVideoSource(moving_rectangle=False)` is not a static scene; its
+  background drifts above the motion gate's sensitivity every frame;
+- a sighting truncates to milliseconds while a decoder reports microseconds.
+
+
 ---
 
 ## What is measured, and where
@@ -192,6 +232,8 @@ and guarded by a committed baseline:
 | appearance re-id | `scripts/evaluate_matching.py --reid` | `tests/integration/matching/baselines/embedding_metrics_baseline.json` |
 | path reconstruction | `scripts/evaluate_pathing.py` | `tests/integration/pathing/baselines/pathing_metrics_baseline.json` |
 | clock offsets | `scripts/estimate_camera_offsets.py` | (diagnostic; no baseline) |
+| detection throughput | `scripts/benchmark_detection.py` | (diagnostic; no baseline) |
+| CI detections | `scripts/record_detection_fixtures.py` | `tests/fixtures/detections/sample_clips.json` |
 
 Rewriting a baseline is a deliberate act. A diff there is a claim that quality
 changed on purpose.

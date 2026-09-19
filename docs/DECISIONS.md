@@ -53,6 +53,31 @@ before the penalty; between two visual-only matches, `0.020`. The penalty must
 sit between those two numbers for strong evidence to bridge unmonitored ground
 while weak evidence does not. 0.05 is the middle of that band.
 
+### Stage 11 calibrated nothing, and says so (stage 11)
+
+Every earlier stage measured its thresholds against stage 05's ground truth.
+Stage 11 could not, and the honest response was to record that rather than to
+produce a sweep against a fixture and call it a measurement.
+
+The only detector available here is `ReferenceBlobDetector`, which finds a bright
+rectangle. Sweeping the minimum box area or the association IoU against it would
+calibrate the shape of a drawn bar. So the stage 11 block of `thresholds.yaml`
+opens with **NOT MEASURED**, each value carries the reasoning that produced it,
+and stage 13 or 20 owns re-deriving them.
+
+One value *is* structurally argued rather than guessed: the four best-frame
+weights must sum to 1.0, because each criterion scores in `[0, 1]` and any other
+sum puts the composite outside that range. That is enforced at startup.
+
+### The best-frame edge penalty is multiplicative (stage 11)
+
+Written first as a subtraction, which is the obvious reading of "penalty". At
+0.5 it drove most edge-touching frames to the clamp at zero, where they all tied
+and frame index decided the ranking -- precisely the wrong answer for a track
+seen *only* at the frame edge, where one of those frames really is the best
+available. A discount preserves their relative order and keeps the score inside
+`[0, 1]` without a clamp.
+
 ### Drift detection needed two extra guards (stage 09)
 
 The shipped script, run against real generated data, flagged **every camera in
@@ -103,6 +128,39 @@ Related: a clean end-of-file and a truncated one are *identical* through
 OpenCV's API — `read()` simply returns `False`. Without checking the container's
 frame count, every complete file was reported as truncated.
 
+### The rotation inverse returns -1 at the frame boundary (stage 11)
+
+Not the stage 10 off-by-one, which was a real bug and is fixed. This is the
+residue of a convention: stage 10's mapping works in pixel *centres*, where the
+inverse of a 90-degree rotation is `width - 1 - x`. Box coordinates are
+half-open, so a box edge legitimately sits at `x = width`, and mapping that edge
+back gives -1.
+
+Found by pushing a real rotated clip through the whole chain, not by reading the
+arithmetic -- which is the argument for the end-to-end test existing.
+`Detection.in_source_coordinates` clamps that one pixel and documents why;
+anything larger than one pixel is a genuine mapping fault and still fails
+against the non-negativity check.
+
+### Two fixtures were not what their names implied (stage 11)
+
+**`sample_clean.mp4` contains two vehicle passes, not one.** Its bar is drawn at
+`(index * 3) % 52`, so on frame 18 it wraps from the right edge back to the
+left. The tracker called it a second vehicle and was right to: a real object
+cannot cross a frame in one frame interval, and a tracker that stitched the
+teleport into one track would be the one that merges two vehicles into a single
+trajectory. The test now asserts two passes and explains the wrap.
+
+**`SyntheticVideoSource(moving_rectangle=False)` is not a static scene.** It
+shifts its whole background by two or three greyscale levels every frame by
+design, which is above the motion gate's default sensitivity. The first version
+of the prefilter test asserted a high skip ratio against it and failed at 0.095
+-- which read as a broken gate and was a scene that was never still. Feeding
+genuinely identical frames gives a skip ratio of 0.97.
+
+Both are the same lesson: a fixture's name is a claim, and a test that trusts
+the name rather than the behaviour measures the claim.
+
 ### The cloned-plate decoy tested nothing (found in stage 06)
 
 Stage 05's clone departed at a random time, so conflict detection found nothing
@@ -151,6 +209,13 @@ means, not just how it works.
    complete when it is not.
 8. **A gate that fires always is a gate nobody reads.** Every threshold that
    raises an alert has been checked against the false-positive case.
+9. **One vehicle pass is one sighting**, emitted only once the pass has ended --
+   because which frame of a pass is worth keeping cannot be known until it is
+   over.
+10. **A sighting is dated from its track's midpoint frame.** Dating from the
+    first frame places every vehicle systematically early, by an amount that
+    varies with the camera's field of view, which corrupts travel-time
+    plausibility across the whole topology while passing every local test.
 
 ---
 
@@ -169,6 +234,10 @@ Worth knowing before trusting a number:
 - **Absolute clock-offset estimates carry the bias of the expected transit
   times.** Differences do not. Prefer the direct clock probe where a device
   exposes one.
+- **No stage 11 threshold is measured.** The detection and tracking values are
+  reasoned starting points. The only detector available here is synthetic, and
+  the CI detection fixtures record a bright rectangle rather than a vehicle, so
+  nothing in this stage has met a real detector.
 - **Precision on `hard_negatives` and `adversarial` is genuinely poor** (0.16,
   0.27 for appearance; 0.44, 0.39 for pathing) and no tuning fixes it. Those
   decoys are indistinguishable by construction. What the system guarantees there

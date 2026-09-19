@@ -11,8 +11,11 @@ topology graph. The output is a timeline plus a map.
 The motivating use case is stolen-vehicle tracking: enter a plate, get back
 which cameras saw it, when, and the route it took.
 
-> **Status: stage 01 of 20.** The foundation (config, logging, exceptions,
-> clock, CI) exists. No domain logic yet. See [Build order](#build-order).
+> **Status: stage 11 of 20.** Everything from configuration through plate and
+> appearance matching, path reconstruction, time synchronization, video
+> ingestion, and vehicle detection exists and is tested. Plate OCR, re-id
+> embedding extraction, the pipeline, the API, and the UI do not.
+> See [Build order](#build-order) and [HANDOFF.md](HANDOFF.md).
 
 ---
 
@@ -91,8 +94,10 @@ On Windows without GNU make, `scripts/dev.ps1` mirrors every target:
 .\scripts\dev.ps1 ci
 ```
 
-The CV stack (`torch`, `ultralytics`, `paddleocr`) is an optional extra and is
-**not** needed before stage 11:
+`opencv-python` and `av` are needed from stage 10 and are part of the same
+extra. The model stack (`torch`, `ultralytics`, `paddleocr`) is needed to run a
+real detector; without it, stage 11 runs against its recorded fixtures and the
+model-dependent tests skip:
 
 ```bash
 make install-vision

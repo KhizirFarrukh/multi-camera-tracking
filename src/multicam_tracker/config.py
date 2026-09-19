@@ -50,6 +50,7 @@ from multicam_tracker.exceptions import ConfigurationError
 __all__ = [
     "ApiSettings",
     "DatabaseSettings",
+    "DetectionSettings",
     "IngestSettings",
     "PathingSettings",
     "RetentionSettings",
@@ -173,6 +174,16 @@ class VisionSettings(_StrictSection):
     device: Literal["cpu", "cuda"] = "cpu"
     frame_sample_rate_fps: float = Field(default=3.0, gt=0.0, le=120.0)
     detection_min_confidence: float = Field(default=0.25, ge=0.0, le=1.0)
+    detection_nms_iou: float = Field(
+        default=0.45,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "IoU above which the detector's own non-maximum suppression merges two "
+            "boxes. A model parameter rather than a project decision, which is why it "
+            "lives here and not in thresholds.yaml."
+        ),
+    )
 
 
 class TopologySettings(_StrictSection):
@@ -245,6 +256,19 @@ class ThresholdSettings(_StrictSection):
     path_gap_edge_penalty: float = Field(ge=0.0, le=1.0)
     path_ambiguity_margin_min: float = Field(ge=0.0, le=1.0)
     path_weakest_link_tolerance: float = Field(ge=0.0, le=1.0)
+    detection_min_bbox_area_px: int = Field(ge=0)
+    detection_max_bbox_area_fraction: float = Field(gt=0.0, le=1.0)
+    detection_min_aspect_ratio: float = Field(gt=0.0)
+    detection_max_aspect_ratio: float = Field(gt=0.0)
+    detection_roi_min_overlap: float = Field(ge=0.0, le=1.0)
+    track_association_min_iou: float = Field(ge=0.0, le=1.0)
+    track_max_age_frames: int = Field(ge=0)
+    track_min_hits_to_confirm: int = Field(ge=1)
+    best_frame_confidence_weight: float = Field(ge=0.0, le=1.0)
+    best_frame_area_weight: float = Field(ge=0.0, le=1.0)
+    best_frame_sharpness_weight: float = Field(ge=0.0, le=1.0)
+    best_frame_centrality_weight: float = Field(ge=0.0, le=1.0)
+    best_frame_edge_penalty: float = Field(ge=0.0, le=1.0)
 
     @model_validator(mode="after")
     def _review_band_is_ordered(self) -> ThresholdSettings:
@@ -290,6 +314,58 @@ class ThresholdSettings(_StrictSection):
                 f"< plate_review_min_confidence x plate_exact_method_weight "
                 f"({weakest_plate_score}); otherwise a visual-only match can outrank a "
                 f"plate match"
+            )
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _aspect_ratio_bounds_are_ordered(self) -> ThresholdSettings:
+        """Reject an inverted aspect-ratio window.
+
+        Returns:
+            The validated instance.
+
+        Raises:
+            ValueError: If the minimum exceeds the maximum, which would reject
+                every detection rather than none -- a camera that silently sees
+                nothing, which is the hardest kind of misconfiguration to
+                notice.
+        """
+        if self.detection_min_aspect_ratio > self.detection_max_aspect_ratio:
+            msg = (
+                f"detection_min_aspect_ratio ({self.detection_min_aspect_ratio}) must be "
+                f"<= detection_max_aspect_ratio ({self.detection_max_aspect_ratio}); "
+                f"an inverted window rejects every detection"
+            )
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _best_frame_weights_sum_to_one(self) -> ThresholdSettings:
+        """Require the four best-frame criteria to form a partition of unity.
+
+        Each criterion contributes a score in ``[0, 1]``, so weights summing to
+        one keep the composite score in ``[0, 1]`` too. That is what makes the
+        ranking score comparable across tracks and readable in a review UI. A
+        sum of 1.4 would produce scores above 1.0 that look like corrupt data.
+
+        Returns:
+            The validated instance.
+
+        Raises:
+            ValueError: If the four weights do not sum to 1.0.
+        """
+        total = (
+            self.best_frame_confidence_weight
+            + self.best_frame_area_weight
+            + self.best_frame_sharpness_weight
+            + self.best_frame_centrality_weight
+        )
+        if abs(total - 1.0) > 1e-6:
+            msg = (
+                f"the four best_frame_* weights must sum to 1.0; they sum to {total}. "
+                f"Each criterion scores in [0, 1], so any other sum puts the composite "
+                f"score outside [0, 1]"
             )
             raise ValueError(msg)
         return self
@@ -350,6 +426,92 @@ class IngestSettings(_StrictSection):
             "Frames the multi-source reader may hold across all cameras. Bounds "
             "memory: the queue holds decoded images, and an unbounded one is a leak "
             "with a slow consumer attached."
+        ),
+    )
+
+
+class DetectionSettings(_StrictSection):
+    """How the detection stage runs (stage 11).
+
+    The split from :class:`VisionSettings` is deliberate. That section describes
+    the *models* -- where their weights are, what device they run on, what
+    confidence they report. This one describes what this deployment does with
+    them: which implementation to build, how many frames to hand it at once, how
+    much of each vehicle to keep, and what a thumbnail looks like.
+
+    The decision boundaries themselves -- minimum box area, association IoU,
+    best-frame weights -- are thresholds and live in ``thresholds.yaml`` with
+    every other threshold.
+    """
+
+    detector_backend: Literal["yolo", "fake", "fixture"] = Field(
+        default="yolo",
+        description=(
+            "Which implementation to build. The point of the interface: swapping "
+            "the detector is a configuration change, not a code change. CI sets "
+            "this to fixture so every downstream stage runs with no weights."
+        ),
+    )
+    fixture_detections_path: Path | None = Field(
+        default=None,
+        description="Recorded detections replayed by the fixture backend",
+    )
+    batch_size: int = Field(
+        default=8,
+        ge=1,
+        description="Frames handed to the detector in one call when batching",
+    )
+    edge_policy: Literal["keep", "flag", "drop"] = Field(
+        default="flag",
+        description=(
+            "What to do with a vehicle half out of frame. Flagged by default: its "
+            "plate is usually unreadable, but discarding it loses the only record "
+            "that something passed at all."
+        ),
+    )
+    edge_margin_px: int = Field(
+        default=2,
+        ge=0,
+        description=(
+            "How close to a border counts as touching it. Non-zero because a "
+            "detector rarely puts a box exactly on the edge even when the vehicle "
+            "is cut off by it."
+        ),
+    )
+    roi_mode: Literal["centroid", "overlap"] = Field(
+        default="centroid",
+        description=(
+            "Whether region membership is decided by the box centroid or by the "
+            "fraction of the box inside the region"
+        ),
+    )
+    max_retained_frames: int = Field(
+        default=5,
+        ge=1,
+        description=(
+            "Cropped images kept per track, highest-ranked first. This is what "
+            "bounds memory: a track of any length holds at most this many images, "
+            "and the rest of its history is a few numbers per frame."
+        ),
+    )
+    crop_padding_fraction: float = Field(
+        default=0.1,
+        ge=0.0,
+        description=(
+            "Context kept around each box, as a fraction of its size. A crop cut "
+            "exactly to the box loses the plate when the box is a pixel tight."
+        ),
+    )
+    thumbnail_width: int = Field(default=224, ge=1)
+    thumbnail_height: int = Field(default=224, ge=1)
+    thumbnail_jpeg_quality: int = Field(default=85, ge=1, le=100)
+    split_long_tracks_sec: float | None = Field(
+        default=None,
+        gt=0.0,
+        description=(
+            "Emit one sighting per this many seconds of track, instead of one per "
+            "track. Off by default; a vehicle parked in view for ten minutes is the "
+            "case it exists for, because one instantaneous sighting misrepresents it."
         ),
     )
 
@@ -581,6 +743,7 @@ class Settings(BaseSettings):
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     vision: VisionSettings = Field(default_factory=VisionSettings)
+    detection: DetectionSettings = Field(default_factory=DetectionSettings)
     topology: TopologySettings = Field(default_factory=TopologySettings)
     ingest: IngestSettings = Field(default_factory=IngestSettings)
     pathing: PathingSettings = Field(default_factory=PathingSettings)
